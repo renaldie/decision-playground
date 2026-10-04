@@ -1,74 +1,143 @@
-# Decision Playground (Ollama Decision Model Playground)
+# Decision Playground (TypeSafe Decision Model Playground)
 
-An industrial-grade model playground built with **Plotly Dash** and **Dash Mantine Components (DMC)** to inspect, evaluate, and benchmark local Ollama decision models (such as `tev1:0.8b` vs `tev1:4b` vs `lfm2.5:8b-a1b-q4_K_M`) on **manufacturing process data** (lines, yields, stoppages, parameter drifts, and defect modes).
+An industrial-grade model playground built with **Plotly Dash** and **Dash Mantine Components (DMC)** to inspect, evaluate, and benchmark local Ollama decision models (such as `tev1:0.8b`, `tev1:4b`, `lfm2.5:8b-a1b-q4_K_M`) on **manufacturing process data** using native **TypeSafe Primitives** (**Noul**, **Choice**, and **Score**).
 
-Designed with a high-density, dark industrial aesthetic (no AI-slop, neutral dark monochrome icons, and distinct vivid color badges reserved strictly for model identification).
+Designed with a high-density, dark industrial aesthetic, rich telemetry meters, and reactive in-memory state management.
 
 ---
 
-## 🌟 Key Features
+## 🌟 Core Features & Architecture
 
-### 1. Local Ollama Integration & GPU Status Indicators
-- **Auto-Discovery**: Queries local Ollama instance (`http://127.0.0.1:11434`) for installed models (`tev1:0.8b`, `tev1:4b`, etc.).
-- **GPU VRAM Status Indicators**:
-  - `🟢 GPU`: Model is resident in GPU VRAM (verified via `ollama ps`).
-  - `⚪ Load`: Model is cold or offloaded. **Clicking the indicator directly warms up and preloads the model into GPU memory** with a 30-minute keep-alive.
-- **Side-by-Side Comparison for up to 3 Models**:
-  - 🔵 **Model 1 (`tev1:0.8b`)**: Cyan Blue identity dot (`#38bdf8`).
-  - 🟠 **Model 2 (`tev1:4b`)**: Amber Orange identity dot (`#f97316`).
-  - 🟣 **Model 3 (`lfm2.5:8b-a1b-q4_K_M`)**: Purple identity dot (`#a855f7`).
+### 1. Native TypeSafe Decision Primitives
+Fully aligned with the [TypeSafe Primitives Specification](https://docs.typesafe.ai/primitives.md):
 
-### 2. Manufacturing Process Data & Quality Gates
-- All data and presets focus strictly on industrial process engineering:
-  - **SMT Line 4 - PCBA Surface Mount Reflow Run** (Yield 99.42% - Nominal)
-  - **Bay 3 Etch Chamber B - Plasma Drift & Pressure Spike** (Yield 91.20% - Excursion)
-  - **Die Cast Cell 2 - Cold Shut & Ladle Misfeed** (Yield 95.79% - Sub-optimal)
-  - **Formation Rack 04 - Thermal Runaway Risk & DC-IR Spikes** (Yield 97.83%)
-  - **CNC Line 6 - 5-Axis Aerospace Impeller Milling** (Yield 99.09% - Precision)
-- **Manufacturing Decision Gates**:
-  1. `yield_target_met` ($P(\text{true})$): Lot yield $\ge$ 98.50% nominal target.
-  2. `line_stoppage_flag` ($P(\text{false})$): Zero unscheduled downtime $> 10$ minutes.
-  3. `parameter_drift` ($P(\text{false})$): Pressures, temperatures, and tolerances remain within 3-sigma control limits.
-  4. `root_cause_documented` ($P(\text{true})$): Formal engineering failure mechanism verified in the log.
-  5. `primary_defect_type` (Categorical Choice): Classifies defect mode (`solder_bridging`, `rf_plasma_drift`, `porosity / cold_shut`, `thermal_gradient`, `none`).
+* **Noul (`noul`)**:
+  * **Function**: Binary judgment / statement evaluation.
+  * **Output**: Calibrated probability $P(\text{yes}) \in [0.0, 1.0]$.
+  * **Criteria**: Clear definitions for `True` (nominal / conforming) and `False` (failure / non-conformance).
+* **Choice (`choice`)**:
+  * **Function**: Categorical classification over discrete mutually-exclusive options.
+  * **Output**: Selected `choice`, complete probability distribution across all options, and confidence metric.
+  * **Criteria**: Dictionary mapping discrete option keys to detailed physical defect/process descriptions.
+* **Score (`score`)**:
+  * **Function**: Continuous position evaluation along an ordered rubric spectrum.
+  * **Output**: Continuous `score` position (e.g. $0.0$ to $N.0$), distribution over levels, and confidence.
+  * **Criteria**: Ordered list of rubric levels (Level 0 through Level $N$) specifying process disturbance severity.
 
-### 3. Dedicated Section: Single Model Inference
-- Dedicated workspace tab to evaluate a single model across an entire dataset:
-  - **Target Model Selector** with live GPU VRAM badge and load trigger.
-  - **Dataset Upload & Ingestion**: Upload custom `.csv`, `.json`, or `.txt` process logs, or click "Load Sample Set" (5 industrial production runs).
-  - **Gate Checklist Configurator**: Select and customize which quality gates to evaluate across every row.
-  - **Execution & Decision Trace Table**: Row-by-row decision audit, pass rate %, excursion count, and average inference latency.
-  - **CSV Export**: Download full decision evaluation matrices directly to CSV.
+---
 
-### 4. Interactive 3-Column Workbench (`Inspect` Mode)
-- **Column 1: INPUT**:
-  - Process snippet selector, monospaced text viewer, character and token estimation (~1.35x words).
-- **Column 2: QUESTIONS (Process Gates)**:
-  - Card list matching industrial audit criteria: gate name, type (`bool` / `choice`), prompt text, metric indicator ($P(\text{true})$), requirement flag, and pass condition.
-- **Column 3: RESULTS**:
-  - Lot clearance banner (`ALL MODELS CLEARED LOT` vs `PROCESS EXCURSION / QUALITY HOLD REQUIRED`).
-  - **Engineering Action Dispatch / Hold Ticket**: Automatically generates a formal shift quarantine ticket detailing flagged gates when an excursion occurs.
-  - Multi-model probability bars with an overlaid vertical line at the gate threshold $\tau$ (e.g. `Auto at ≥ 90%`).
-  - Extracted log citations and latency tracking.
+### 2. Interactive Questions Panel (`panel_questions.py`)
 
-### 5. Benchmark Sensitivity & Run Audit (`Batch` & `Runs` Modes)
-- **Plotly Sensitivity Curve**: Interactive curve showing how tuning the threshold $\tau$ (70% - 95%) trades off auto-clearance vs human engineering escalation.
-- **Session Audit History**: Log of all executed decision runs with timestamps, active models, and gate outcomes.
+* **Interactive Primitive Switcher**:
+  * Change question primitives (`noul`, `choice`, `score`) dynamically on each card via the type dropdown.
+  * Card elements, metric targets, and criteria immediately adapt with dedicated color accents (Blue for Noul, Cyan for Choice, Violet for Score).
+* **Option & Level Pills with Hover Tooltips**:
+  * Hovering over any option pill (Choice), rubric level pill (Score), or True/False pill (Noul) reveals an instant tooltip popover containing the full criteria definition.
+* **Expandable Criteria Inspector Accordion**:
+  * Each question card features a compact `Criteria Definitions (N)` accordion. Clicking it expands an inline breakdown displaying every option or rubric level alongside its full text specification.
+* **On-the-Fly Question Editing Modal**:
+  * Click the **`Edit`** button on any card to open the question editor.
+  * Modify **Identifier / Name**, **Primitive Type**, **Instructions / Prompt**, and **Criteria** on the fly.
+  * Changes update the active in-memory reactive store immediately without altering `data/example.json`.
+* **Unified Question Actions**:
+  * Single-click **`Edit`** and **`Remove`** buttons cleanly manage question sets.
+  * Add custom decision checks via **`+ Add Check`** modal.
+* **Question Template Switcher**:
+  * Switch between preset suites: **Process Quality Gates** (`data/example.json`) and **Custom Criteria** (`data/template.json`).
+
+---
+
+### 3. Decisions & Evaluation Panel (`panel_decisions.py`)
+
+* **Prediction vs. Truth Inspection**:
+  * Direct comparison between model inference outputs and ground-truth process labels.
+* **Stepped Gradient Capsule Meters**:
+  * **Noul**: 10-step blue gradient capsule meter reflecting $P(\text{yes})$.
+  * **Choice**: 10-step cyan gradient capsule meter reflecting classification confidence.
+  * **Score**: Multi-capsule violet spectrum meter calibrated to the exact number of rubric levels (e.g., 4 levels = 4 distinct segments).
+* **Multi-Model Side-by-Side Inference**:
+  * Compare up to 4 models concurrently with latency tracking (ms), evaluated tokens, and exact log excerpts.
+
+---
+
+### 4. Local Ollama Integration & GPU Status
+
+* **Automatic Model Discovery**: Queries local Ollama instance (`http://127.0.0.1:11434`) and cross-references installed models.
+* **GPU VRAM Status Indicators**:
+  * `🟢 GPU`: Model is actively resident in GPU VRAM (verified via `ollama ps`).
+  * `⚪ Load`: Model is cold or offloaded. Clicking preloads the model into GPU memory with a 30-minute keep-alive.
+* **Distinct Color Badges**:
+  * 🔵 **Cyan Blue** (`#38bdf8`)
+  * 🟠 **Amber Orange** (`#f97316`)
+  * 🟣 **Purple** (`#a855f7`)
+  * 🟢 **Emerald Green** (`#10b981`)
+
+---
+
+### 5. Multi-View Workspace
+
+* **Workbench View (`Inspect`)**:
+  * **Left Column (STATE)**: Industrial production log viewer, character and token estimation, and preset run selectors.
+  * **Center Column (QUESTIONS)**: Interactive TypeSafe question cards, primitive switchers, option pills, and criteria inspectors.
+  * **Right Column (DECISIONS)**: Side-by-side inference outputs, stepped gradient meters, and prediction metrics.
+* **Dedicated Single-Model Inference View (`Inference`)**:
+  * Run individual models across entire datasets with row-by-row decision audits, pass rates, and CSV matrix export.
+* **Batch Sensitivity Benchmark View (`Batch`)**:
+  * Threshold sensitivity curves and aggregate multi-run evaluation.
+* **Audit History View (`Logs`)**:
+  * Timestamped session execution audit logs.
+
+---
+
+## 📁 Dataset & File Structure
+
+```text
+decision-playground/
+├── app.py                         # Dash main application, callbacks, and layout
+├── main.py                        # Entry point runner (port 8050)
+├── assets/
+│   ├── style.css                  # Industrial dark theme styles
+│   └── run_button.js              # Run button interaction script
+├── components/
+│   ├── header.py                  # App header, model selectors, view tabs
+│   ├── panel_state.py             # Input state / text log viewer panel
+│   ├── panel_questions.py         # Questions panel, card rendering, criteria inspector
+│   ├── panel_decisions.py         # Decisions panel, stepped gradient meters
+│   ├── add_question_modal.py      # Modal to add new decision checks
+│   ├── edit_question_modal.py     # Modal to edit question name, type, prompt, criteria
+│   ├── tab_inference.py           # Dedicated single model dataset inference
+│   ├── tab_batch.py               # Batch evaluation & sensitivity curve
+│   └── tab_logs.py                # Session execution history logs
+├── data/
+│   ├── example.json               # Baseline manufacturing dataset (pristine reference)
+│   └── template.json              # Clean criteria template dataset
+└── src/
+    ├── types.py                   # TypeSafe schemas (DecisionQuestion, DatasetRecord, etc.)
+    ├── presets.py                 # Preset loaders & dataset utilities
+    ├── evaluator.py               # Inference execution & evaluation logic
+    ├── benchmark.py               # Batch benchmark computations
+    ├── config.py                  # Model configuration & settings
+    └── ollama_client.py           # Local Ollama API client & VRAM manager
+```
 
 ---
 
 ## 🚀 Quickstart
 
-1. **Verify Ollama is Running**:
-   ```bash
-   ollama list
-   ollama ps
-   ```
+### 1. Verify Local Ollama
+```bash
+ollama list
+ollama ps
+```
 
-2. **Launch the Playground**:
-   ```bash
-   uv run python main.py
-   ```
+### 2. Launch the Playground
+```bash
+# Using uv (recommended)
+uv run python main.py
 
-3. **Open in Browser**:
-   Navigate to [http://127.0.0.1:8050](http://127.0.0.1:8050)
+# Or using python directly
+python main.py
+```
+
+### 3. Open in Browser
+Navigate to **`http://127.0.0.1:8050`** in your browser.
