@@ -510,3 +510,60 @@ body {
   text-overflow: ellipsis;
   max-width: 140px;
 }
+
+/* Animated Circle Spinner & Run Button States */
+@keyframes spin-circle {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.animated-circle-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: spin-circle 0.75s linear infinite;
+  display: inline-block;
+  box-sizing: border-box;
+}
+
+#run-button .run-btn-idle {
+  display: inline-flex !important;
+}
+
+#run-button .run-btn-loading {
+  display: none !important;
+}
+
+#run-button.is-running .run-btn-idle,
+#run-button[data-running="true"] .run-btn-idle,
+#run-button[data-dash-is-loading="true"] .run-btn-idle {
+  display: none !important;
+}
+
+#run-button.is-running .run-btn-loading,
+#run-button[data-running="true"] .run-btn-loading,
+#run-button[data-dash-is-loading="true"] .run-btn-loading {
+  display: inline-flex !important;
+}
+
+#run-button.is-running,
+#run-button[data-running="true"],
+#run-button[data-dash-is-loading="true"] {
+  opacity: 0.88;
+  cursor: wait !important;
+  background-color: #161c28 !important;
+  border-color: #38bdf855 !important;
+}
+
+#decisions-panel-content[data-dash-is-loading="true"] {
+  opacity: 0.45;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+

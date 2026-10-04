@@ -171,32 +171,33 @@ def evaluate_manufacturing_question(
             rationale=f"Model classified discrete defect distribution with {confidence*100:.1f}% confidence.",
         )
 
-    # Score (ordinal rubric) questions
+    # Score (ordered spectrum) questions
     q_type_str = str(getattr(question, "type", "noul")).lower()
     if q_type_str in ("score", "ordinal"):
+        top_level = float(len(question.criteria) - 1) if (isinstance(question.criteria, list) and len(question.criteria) > 1) else 3.0
         score_val = 0.0
         if "severity" in q_name or "excursion" in q_name:
             if "runaway" in text_lower or "breakdown" in text_lower or "punch-through" in text_lower or "fire" in text_lower:
-                score_val = 3.0
+                score_val = min(top_level, 3.0)
             elif "stoppage" in text_lower or "excursion" in text_lower or "failed" in text_lower or "quarantined" in text_lower:
-                score_val = 2.0
+                score_val = min(top_level, 2.0)
             elif "minor" in text_lower or "scrap" in text_lower or "warning" in text_lower:
-                score_val = 1.0
+                score_val = min(top_level, 1.0)
             else:
                 score_val = 0.0
         elif "documentation" in q_name or "completeness" in q_name:
             if "spc" in text_lower or "telemetry" in text_lower or "shift log" in text_lower or "cmm" in text_lower:
-                score_val = 2.0
+                score_val = min(top_level, 2.0)
             elif "report" in text_lower or "log" in text_lower:
-                score_val = 1.0
+                score_val = min(top_level, 1.0)
             else:
                 score_val = 0.0
         else:
-            score_val = 1.0
+            score_val = min(top_level, 1.0)
 
-        pass_limit = float(question.pass_condition) if question.pass_condition is not None else 1.0
-        passed = (score_val <= pass_limit)
-        conf = max(0.85, min(0.98, 0.90 + noise))
+        # TypeSafe score is a continuous position along levels: score = sum(level * prob)
+        score_val = max(0.0, min(top_level, round(score_val + (noise * 0.35), 2)))
+        conf = max(0.40, min(0.98, 0.90 - abs(noise)))
 
         return QuestionEvaluation(
             question_id=question.id,
@@ -205,11 +206,12 @@ def evaluate_manufacturing_question(
             question_type="score",
             required=question.required,
             p_true=score_val,
-            passed=passed,
+            passed=True,
             confidence=conf,
             score=score_val,
-            evidence=f"Rubric Score: {score_val:.0f} (Pass Limit: <= {pass_limit:.0f})",
-            rationale=f"Model evaluated ordinal rubric level {score_val:.0f} for {question.name}",
+            evidence=f"Spectrum position: {score_val:.2f} (scale: 0.0 - {top_level:.0f})",
+            rationale=f"Evaluated continuous position along {int(top_level + 1)} levels with {conf*100:.0f}% confidence",
+            metadata={"top_level": top_level, "criteria": question.criteria},
         )
 
     # Boolean questions
@@ -458,18 +460,19 @@ def run_model_inference(
             elif ans_type == "score" or hasattr(ans, "score"):
                 score_val = float(getattr(ans, "score", 0.0))
                 conf = float(getattr(ans, "confidence", 0.85))
-                passed = (score_val <= float(q.pass_condition)) if isinstance(q.pass_condition, (int, float)) else True
+                top_level = float(len(q.criteria) - 1) if (isinstance(q.criteria, list) and len(q.criteria) > 1) else 3.0
                 ev = QuestionEvaluation(
                     question_name=q.name,
                     question_type="score",
                     instructions=q.instructions,
                     required=q.required,
                     p_true=score_val,
-                    passed=passed,
+                    passed=True,
                     confidence=conf,
                     score=score_val,
                     evidence=f"Score: {score_val:.2f} (conf: {conf:.2f})",
-                    rationale=f"TypeSafe rubric evaluation by {model_name}",
+                    rationale=f"TypeSafe score spectrum evaluation by {model_name}",
+                    metadata={"top_level": top_level, "criteria": q.criteria},
                 )
             else:
                 ev = evaluate_manufacturing_question(model_name, text, q, threshold)

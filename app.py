@@ -8,6 +8,7 @@ import io
 import base64
 import json
 import csv
+from typing import Dict, List, Optional, Any
 import dash
 from dash import html, dcc, Input, Output, State, ALL, ctx, no_update
 import dash_mantine_components as dmc
@@ -26,12 +27,10 @@ from src.config import get_available_models, get_default_model, get_default_thre
 from src.logger import log_run
 from src.ollama_client import (
     get_installed_models,
-    get_gpu_loaded_models,
-    load_model_to_gpu,
-    stop_model_on_gpu,
+    get_cross_referenced_models,
     is_ollama_online,
 )
-from components.header import create_header, render_model_toggle_pill
+from components.header import create_header
 from components.panel_state import create_state_panel
 from components.panel_questions import create_questions_panel, render_question_card
 from components.panel_decisions import create_decisions_panel, render_decisions_content
@@ -41,14 +40,12 @@ from components.tab_inference import (
     get_dataset_results_headers,
 )
 from components.tab_batch import create_batch_tab, render_batch_results
-from components.tab_logs import create_runs_tab
 from components.add_question_modal import create_add_question_modal
+from components.edit_question_modal import create_edit_question_modal
 
 
-# Query installed Ollama models
-installed_models_data = get_installed_models()
-installed_model_names = [m["name"] for m in installed_models_data] if installed_models_data else get_available_models()
-gpu_models_map = get_gpu_loaded_models()
+# Query cross-referenced Ollama models (config.yaml intersected with ollama list)
+available_models = get_cross_referenced_models()
 
 app = dash.Dash(
     __name__,
@@ -66,29 +63,24 @@ app.layout = html.Div(
         dcc.Store(id="active-questions-store", data=initial_questions),
         dcc.Store(id="runs-history-store", data=[]),
         dcc.Store(id="latest-results-store", data=None),
-        dcc.Store(id="installed-models-store", data=installed_model_names),
-        dcc.Store(id="gpu-models-store", data=gpu_models_map),
+        dcc.Store(id="installed-models-store", data=available_models),
         dcc.Store(id="inference-dataset-store", data=None),
         dcc.Store(id="inference-results-store", data=None),
         dcc.Store(id="inspect-panels-state", data={"state_collapsed": False, "questions_collapsed": False, "decisions_collapsed": False, "maximized": None}),
-        dcc.Store(id="prev-model-values-store", data={"0": None, "1": None, "2": None, "3": None}),
         dcc.Clipboard(id="clipboard-helper"),
-
-        # Periodic interval to check GPU status
-        dcc.Interval(id="gpu-poll-interval", interval=10000, n_intervals=0),
 
         # Mantine UI Provider
         dmc.MantineProvider(
             forceColorScheme="dark",
             children=[
-                # Top Header (Compact 2-Row 4-Model Dropdown Header)
-                create_header(
-                    gpu_models=gpu_models_map,
-                    active_indices=[0],
-                ),
+                # Top Header
+                create_header(),
 
                 # Add Question Modal
                 create_add_question_modal(),
+
+                # Edit Question Modal
+                create_edit_question_modal(),
 
                 # Main Views Container
                 html.Div(
@@ -102,7 +94,7 @@ app.layout = html.Div(
                             children=[
                                 create_state_panel(),
                                 create_questions_panel(DEFAULT_MANUFACTURING_QUESTIONS),
-                                create_decisions_panel(),
+                                create_decisions_panel(available_models=available_models),
                             ]
                         ),
 
@@ -114,7 +106,7 @@ app.layout = html.Div(
                                 html.Div(
                                     id="inference-content",
                                     children=create_inference(
-                                        installed_models=[{"name": m} for m in installed_model_names],
+                                        installed_models=[{"name": m} for m in available_models],
                                         selected_model=get_default_model(),
                                         dataset_records=None,
                                         evaluation_results=None,
@@ -229,226 +221,44 @@ def switch_view(
         )
 
 
-# 2. Check GPU Status and Poll
+# 2. Dynamic checkboxes synced with cross-referenced models
 @app.callback(
-    Output("gpu-models-store", "data"),
-    Input("gpu-poll-interval", "n_intervals"),
+    Output("decisions-model-checkboxes", "children"),
+    Input("installed-models-store", "data"),
 )
-def poll_gpu_status(n):
-    return get_gpu_loaded_models()
-
-
-# 3. Model Preloading / Warm-up to GPU on Click
-@app.callback(
-    Output("gpu-models-store", "data", allow_duplicate=True),
-    Input("gpu-load-btn-0", "n_clicks"),
-    Input("gpu-load-btn-1", "n_clicks"),
-    Input("gpu-load-btn-2", "n_clicks"),
-    Input("gpu-load-btn-3", "n_clicks"),
-    State("model-select-0", "value"),
-    State("model-select-1", "value"),
-    State("model-select-2", "value"),
-    State("model-select-3", "value"),
-    prevent_initial_call=True,
-)
-def handle_gpu_preload(btn0, btn1, btn2, btn3, m0, m1, m2, m3):
-    triggered = ctx.triggered_id
-    if not triggered:
-        return no_update
-
-    idx = 0
-    for i in range(4):
-        if str(i) in str(triggered):
-            idx = i
-            break
-
-    slot_models = [m0, m1, m2, m3]
-    if idx < len(slot_models) and slot_models[idx]:
-        target_model = slot_models[idx]
-        load_model_to_gpu(target_model)
-        return get_gpu_loaded_models()
-    return no_update
-
-
-# 3a. Stop model when its slot is cleared (X clicked on Select)
-@app.callback(
-    Output("gpu-models-store", "data", allow_duplicate=True),
-    Output("prev-model-values-store", "data"),
-    Input("model-select-0", "value"),
-    Input("model-select-1", "value"),
-    Input("model-select-2", "value"),
-    Input("model-select-3", "value"),
-    State("prev-model-values-store", "data"),
-    prevent_initial_call=True,
-)
-def handle_model_select_change(m0, m1, m2, m3, prev_data):
-    prev = prev_data or {"0": None, "1": None, "2": None, "3": None}
-    current = {"0": m0 or None, "1": m1 or None, "2": m2 or None, "3": m3 or None}
-    stopped_any = False
-    for idx, (cur_val, prev_val) in enumerate(zip([m0, m1, m2, m3], [prev.get("0"), prev.get("1"), prev.get("2"), prev.get("3")])):
-        # Slot was cleared (X clicked): cur is None/empty, prev had a model
-        if not cur_val and prev_val:
-            stop_model_on_gpu(prev_val)
-            stopped_any = True
-    new_prev = {"0": m0 or None, "1": m1 or None, "2": m2 or None, "3": m3 or None}
-    gpu_map = get_gpu_loaded_models() if stopped_any else no_update
-    return gpu_map, new_prev
-
-
-# 3b. Show loading animation on the badge while GPU preload is in progress
-@app.callback(
-    Output("gpu-load-btn-0", "children", allow_duplicate=True), Output("gpu-load-btn-0", "className", allow_duplicate=True),
-    Output("gpu-load-btn-1", "children", allow_duplicate=True), Output("gpu-load-btn-1", "className", allow_duplicate=True),
-    Output("gpu-load-btn-2", "children", allow_duplicate=True), Output("gpu-load-btn-2", "className", allow_duplicate=True),
-    Output("gpu-load-btn-3", "children", allow_duplicate=True), Output("gpu-load-btn-3", "className", allow_duplicate=True),
-    Input("gpu-load-btn-0", "n_clicks"),
-    Input("gpu-load-btn-1", "n_clicks"),
-    Input("gpu-load-btn-2", "n_clicks"),
-    Input("gpu-load-btn-3", "n_clicks"),
-    State("model-select-0", "value"),
-    State("model-select-1", "value"),
-    State("model-select-2", "value"),
-    State("model-select-3", "value"),
-    prevent_initial_call=True,
-)
-def show_loading_badge(btn0, btn1, btn2, btn3, m0, m1, m2, m3):
-    """Immediately marks the clicked badge as 'Loading…' with shimmer animation before actual load completes."""
-    triggered = ctx.triggered_id
-    if not triggered:
-        return (no_update,) * 8
-
-    idx = 0
-    for i in range(4):
-        if str(i) in str(triggered):
-            idx = i
-            break
-
-    slot_models = [m0, m1, m2, m3]
-    target = slot_models[idx] if idx < len(slot_models) else None
-    if not target:
-        return (no_update,) * 8
-
-    loading_children = [
-        html.Span("◔", style={"marginRight": "2px", "color": "#f59e0b"}),
-        html.Span("Loading…"),
+def sync_decisions_models_options(installed_models):
+    models = installed_models or get_cross_referenced_models()
+    return [
+        dmc.Checkbox(
+            label=m,
+            value=m,
+            size="xs",
+            color="blue",
+            styles={
+                "input": {"cursor": "pointer", "backgroundColor": "#090a0f", "borderColor": "#2a3142"},
+                "label": {
+                    "cursor": "pointer",
+                    "fontFamily": "'JetBrains Mono', monospace",
+                    "fontSize": "11px",
+                    "color": "#f1f5f9",
+                    "paddingLeft": "4px",
+                },
+            },
+        )
+        for m in models
     ]
-    out = [no_update] * 8
-    out[idx * 2] = loading_children
-    out[idx * 2 + 1] = "gpu-badge-loading"
-    return tuple(out)
 
 
-# 4. Dynamic GPU Status Badges on Poll or Model Change
+# 3. Model Dropdown Label: updates dropdown box text ('1 model', '2 model', etc.) when selections change
 @app.callback(
-    Output("gpu-load-btn-0", "children"), Output("gpu-load-btn-0", "className"), Output("gpu-load-btn-0", "title"),
-    Output("gpu-load-btn-1", "children"), Output("gpu-load-btn-1", "className"), Output("gpu-load-btn-1", "title"),
-    Output("gpu-load-btn-2", "children"), Output("gpu-load-btn-2", "className"), Output("gpu-load-btn-2", "title"),
-    Output("gpu-load-btn-3", "children"), Output("gpu-load-btn-3", "className"), Output("gpu-load-btn-3", "title"),
-    Input("gpu-models-store", "data"),
-    Input("model-select-0", "value"),
-    Input("model-select-1", "value"),
-    Input("model-select-2", "value"),
-    Input("model-select-3", "value"),
+    Output("models-dropdown-btn", "children"),
+    Input("decisions-model-select", "value"),
 )
-def update_gpu_badges(gpu_models, m0, m1, m2, m3):
-    gpu_map = gpu_models or {}
-    results = []
-    for m in [m0, m1, m2, m3]:
-        is_on = bool(m and (m in gpu_map or any(m in k for k in gpu_map.keys())))
-        children = [
-            html.Span("●" if is_on else "○", style={"marginRight": "2px", "color": "#22c55e" if is_on else "#64748b"}),
-            html.Span("Ready" if is_on else "Load"),
-        ]
-        cls_name = "gpu-badge-ready" if is_on else "gpu-badge-cold"
-        title = f"{m} is resident on GPU — Ready" if is_on else f"Click to load {m} into GPU VRAM"
-        results.extend([children, cls_name, title])
-    return tuple(results)
-
-
-# 4b. Dynamic Dot Colors based on selected model
-@app.callback(
-    Output("model-dot-0", "style"),
-    Output("model-dot-1", "style"),
-    Output("model-dot-2", "style"),
-    Output("model-dot-3", "style"),
-    Input("model-select-0", "value"),
-    Input("model-select-1", "value"),
-    Input("model-select-2", "value"),
-    Input("model-select-3", "value"),
-)
-def update_model_dot_colors(m0, m1, m2, m3):
-    styles = []
-    for idx, m in enumerate([m0, m1, m2, m3]):
-        color = get_model_color(m or "", idx)
-        styles.append({"backgroundColor": color, "boxShadow": f"0 0 6px {color}88"})
-    return tuple(styles)
-
-
-# 4c. Active Pill Highlighting
-@app.callback(
-    Output("model-slot-0", "className"),
-    Output("model-slot-1", "className"),
-    Output("model-slot-2", "className"),
-    Output("model-slot-3", "className"),
-    Input("model-toggle-0", "checked"),
-    Input("model-toggle-1", "checked"),
-    Input("model-toggle-2", "checked"),
-    Input("model-toggle-3", "checked"),
-)
-def update_slot_classes(c0, c1, c2, c3):
-    return tuple("model-slot-pill active" if c else "model-slot-pill" for c in [c0, c1, c2, c3])
-
-
-# 4d. Model Indicators Summary (Supports 4 models)
-@app.callback(
-    Output("active-models-summary", "children"),
-    Input("model-toggle-0", "checked"),
-    Input("model-toggle-1", "checked"),
-    Input("model-toggle-2", "checked"),
-    Input("model-toggle-3", "checked"),
-)
-def update_active_models_header(m0_on, m1_on, m2_on, m3_on):
-    active_count = sum(1 for c in [m0_on, m1_on, m2_on, m3_on] if c)
-    if active_count == 0:
-        return "0 Models Active"
-    return f"{active_count} Model{'s' if active_count > 1 else ''} Active"
-
-
-# 4f. Auto-toggle checkbox when model is selected from -Model- placeholder
-@app.callback(
-    Output("model-toggle-0", "checked"),
-    Input("model-select-0", "value"),
-    prevent_initial_call=True,
-)
-def auto_toggle_m0(val):
-    return bool(val)
-
-
-@app.callback(
-    Output("model-toggle-1", "checked"),
-    Input("model-select-1", "value"),
-    prevent_initial_call=True,
-)
-def auto_toggle_m1(val):
-    return bool(val)
-
-
-@app.callback(
-    Output("model-toggle-2", "checked"),
-    Input("model-select-2", "value"),
-    prevent_initial_call=True,
-)
-def auto_toggle_m2(val):
-    return bool(val)
-
-
-@app.callback(
-    Output("model-toggle-3", "checked"),
-    Input("model-select-3", "value"),
-    prevent_initial_call=True,
-)
-def auto_toggle_m3(val):
-    return bool(val)
+def update_models_dropdown_label(selected_models):
+    count = len(selected_models) if selected_models else 0
+    if count == 0:
+        return "0 model"
+    return f"{count} model(s)"
 
 
 # 4e. Manage Expandable/Collapsible Workbench Cards
@@ -648,8 +458,99 @@ def delete_question(n_clicks_list, current_data):
     if not triggered or not isinstance(triggered, dict):
         return no_update
     q_id_to_delete = triggered.get("index")
-    updated = [q for q in current_data if q.get("id") != q_id_to_delete]
+    updated = [q for q in current_data if q.get("id") != q_id_to_delete and q.get("name") != q_id_to_delete]
     return updated
+
+
+# 10b. Update Question Primitive Type (Noul / Choice / Score)
+@app.callback(
+    Output("active-questions-store", "data", allow_duplicate=True),
+    Input({"type": "q-type-select", "index": ALL}, "value"),
+    State("active-questions-store", "data"),
+    prevent_initial_call=True,
+)
+def handle_question_type_change(values, current_data):
+    if not ctx.triggered_id or not isinstance(ctx.triggered_id, dict):
+        return no_update
+    if ctx.triggered_id.get("type") != "q-type-select":
+        return no_update
+
+    target_id = ctx.triggered_id.get("index")
+    new_type = None
+    for trig in ctx.triggered:
+        prop_id = trig.get("prop_id", "")
+        if "q-type-select" in prop_id:
+            new_type = trig.get("value")
+            break
+
+    if not new_type or not target_id or not current_data:
+        return no_update
+
+    new_type = str(new_type).lower()
+    updated = []
+    changed = False
+
+    for item in current_data:
+        q_dict = dict(item)
+        qid = q_dict.get("id") or q_dict.get("name")
+        qname = q_dict.get("name")
+        if qid == target_id or qname == target_id:
+            if q_dict.get("type") != new_type:
+                q_dict["type"] = new_type
+                changed = True
+                if new_type == "noul":
+                    old_crit = q_dict.get("criteria")
+                    if not (isinstance(old_crit, dict) and "true" in old_crit and "false" in old_crit):
+                        q_dict["criteria"] = {
+                            "true": "Target condition or spec is strictly met with zero defects.",
+                            "false": "Target condition failed, spec missed, or non-conformance occurred."
+                        }
+                    q_dict["choices"] = []
+                elif new_type == "choice":
+                    old_crit = q_dict.get("criteria")
+                    if not (isinstance(old_crit, dict) and "true" not in old_crit and len(old_crit) >= 2):
+                        q_dict["criteria"] = {
+                            "none": "Within nominal tolerance, no defect detected.",
+                            "defect": "Defect or non-conformance detected.",
+                            "quarantine": "Critical parameter excursion or stoppage."
+                        }
+                    q_dict["choices"] = list(q_dict["criteria"].keys())
+                elif new_type == "score":
+                    old_crit = q_dict.get("criteria")
+                    if not (isinstance(old_crit, list) and len(old_crit) >= 2):
+                        q_dict["criteria"] = [
+                            "Level 0: Nominal continuous run within control envelope.",
+                            "Level 1: Minor nuisance alert cleared rapidly with zero scrap.",
+                            "Level 2: Moderate excursion with line pause or partial hold.",
+                            "Level 3: Critical equipment breakdown or complete scrap event."
+                        ]
+                    q_dict["choices"] = []
+        updated.append(q_dict)
+
+    if not changed:
+        return no_update
+
+    return updated
+
+
+# 10c. Handle Question Template Switcher
+@app.callback(
+    Output("active-questions-store", "data", allow_duplicate=True),
+    Input("question-template-select", "value"),
+    prevent_initial_call=True,
+)
+def handle_template_selection(template_val):
+    if not template_val:
+        return no_update
+    if template_val == "manufacturing_gates":
+        from src.presets import DATASET_JSON_PATH
+        fresh_dataset = DecisionDataset.from_json(str(DATASET_JSON_PATH))
+        return [q.to_dict() for q in fresh_dataset.questions]
+    elif template_val == "custom":
+        from src.presets import get_template_dataset
+        tmpl = get_template_dataset()
+        return [q.to_dict() for q in tmpl.questions]
+    return no_update
 
 
 # 11. Add Question Modal Open / Close / Submit
@@ -666,8 +567,6 @@ def delete_question(n_clicks_list, current_data):
     State("new-q-prompt", "value"),
     State("new-q-type", "value"),
     State("new-q-choices", "value"),
-    State("new-q-required", "checked"),
-    State("new-q-needs-record", "checked"),
     State("active-questions-store", "data"),
     prevent_initial_call=True,
 )
@@ -679,8 +578,6 @@ def manage_add_question_modal(
     q_prompt,
     q_type,
     q_choices_str,
-    q_required,
-    q_needs_record,
     current_data,
 ):
     button_id = ctx.triggered_id
@@ -705,7 +602,6 @@ def manage_add_question_modal(
             instructions=q_prompt.strip(),
             type=q_type,
             criteria=criteria_val,
-            required=bool(q_required),
             pass_condition=True,
             pass_choice=choices_list[0] if (choices_list and q_type == "choice") else None,
         )
@@ -715,23 +611,209 @@ def manage_add_question_modal(
     return no_update, no_update, no_update, no_update, no_update
 
 
-# 12. Run Decision Evaluation Callback (Supports up to 4 side-by-side models)
+# Helper criteria parsers for on-the-fly question edits
+def parse_choice_criteria(text: str) -> Dict[str, str]:
+    result = {}
+    lines = [l.strip() for l in (text or "").strip().splitlines() if l.strip()]
+    for line in lines:
+        if ":" in line:
+            parts = line.split(":", 1)
+            k = parts[0].strip()
+            v = parts[1].strip()
+            if k:
+                result[k] = v or k
+        elif "," in line:
+            for item in line.split(","):
+                item = item.strip()
+                if item:
+                    result[item] = item
+        else:
+            result[line] = line
+    return result if result else {"none": "Within nominal tolerance", "defect": "Defect detected"}
+
+
+def parse_score_criteria(text: str) -> List[str]:
+    lines = [l.strip() for l in (text or "").strip().splitlines() if l.strip()]
+    cleaned = []
+    for l in lines:
+        import re
+        l_clean = re.sub(r"^(?:Level\s*\d+|L\d+|\d+)[:\s.-]+", "", l, flags=re.IGNORECASE).strip()
+        cleaned.append(l_clean if l_clean else l)
+    return cleaned if len(cleaned) >= 2 else ["Level 0: Nominal", "Level 1: Minor", "Level 2: Severe", "Level 3: Critical"]
+
+
+# 11b. Edit Question Modal: Toggle Criteria Fields by Primitive Type
+@app.callback(
+    Output("edit-q-noul-container", "style"),
+    Output("edit-q-choice-container", "style"),
+    Output("edit-q-score-container", "style"),
+    Input("edit-q-type", "value"),
+)
+def toggle_edit_criteria_fields(q_type):
+    t = str(q_type or "noul").lower()
+    if t == "choice":
+        return {"display": "none"}, {"display": "block"}, {"display": "none"}
+    elif t == "score":
+        return {"display": "none"}, {"display": "none"}, {"display": "block"}
+    return {"display": "block"}, {"display": "none"}, {"display": "none"}
+
+
+# 11c. Edit Question Modal: Open & Populate Fields from Selected Question
+@app.callback(
+    Output("edit-question-modal", "opened"),
+    Output("editing-question-id-store", "data"),
+    Output("edit-q-name", "value"),
+    Output("edit-q-type", "value"),
+    Output("edit-q-instructions", "value"),
+    Output("edit-q-noul-true", "value"),
+    Output("edit-q-noul-false", "value"),
+    Output("edit-q-choice-text", "value"),
+    Output("edit-q-score-text", "value"),
+    Input({"type": "q-edit-btn", "index": ALL}, "n_clicks"),
+    Input("cancel-edit-q-btn", "n_clicks"),
+    State("active-questions-store", "data"),
+    prevent_initial_call=True,
+)
+def open_edit_question_modal(edit_clicks_list, cancel_clicks, current_data):
+    button_id = ctx.triggered_id
+    if button_id == "cancel-edit-q-btn":
+        return False, "", "", "noul", "", "", "", "", ""
+
+    if not any(c for c in edit_clicks_list if c):
+        return no_update
+
+    if not button_id or not isinstance(button_id, dict):
+        return no_update
+
+    target_key = button_id.get("index")
+    if not target_key or not current_data:
+        return no_update
+
+    found = None
+    for item in current_data:
+        qid = item.get("id") or item.get("name")
+        qname = item.get("name")
+        if qid == target_key or qname == target_key:
+            found = item
+            break
+
+    if not found:
+        return no_update
+
+    q_name = found.get("name", "")
+    q_type = str(found.get("type", "noul")).lower()
+    q_instructions = found.get("instructions") or found.get("prompt") or ""
+    crit = found.get("criteria")
+
+    noul_true = ""
+    noul_false = ""
+    choice_text = ""
+    score_text = ""
+
+    if q_type == "choice":
+        if isinstance(crit, dict):
+            choice_text = "\n".join(f"{k}: {v}" for k, v in crit.items())
+        elif isinstance(crit, list):
+            choice_text = "\n".join(str(c) for c in crit)
+        elif found.get("choices"):
+            choice_text = "\n".join(str(c) for c in found["choices"])
+    elif q_type == "score":
+        if isinstance(crit, list):
+            score_text = "\n".join(str(l) for l in crit)
+        elif isinstance(crit, dict):
+            score_text = "\n".join(f"{k}: {v}" for k, v in crit.items())
+    else:  # noul
+        if isinstance(crit, dict):
+            noul_true = crit.get("true", "")
+            noul_false = crit.get("false", "")
+
+    return True, target_key, q_name, q_type, q_instructions, noul_true, noul_false, choice_text, score_text
+
+
+# 11d. Edit Question Modal: Save Changes to Store
+@app.callback(
+    Output("edit-question-modal", "opened", allow_duplicate=True),
+    Output("active-questions-store", "data", allow_duplicate=True),
+    Input("save-edit-q-btn", "n_clicks"),
+    State("editing-question-id-store", "data"),
+    State("edit-q-name", "value"),
+    State("edit-q-type", "value"),
+    State("edit-q-instructions", "value"),
+    State("edit-q-noul-true", "value"),
+    State("edit-q-noul-false", "value"),
+    State("edit-q-choice-text", "value"),
+    State("edit-q-score-text", "value"),
+    State("active-questions-store", "data"),
+    prevent_initial_call=True,
+)
+def save_question_edits(
+    n_clicks,
+    target_id,
+    new_name,
+    new_type,
+    new_instructions,
+    noul_true,
+    noul_false,
+    choice_text,
+    score_text,
+    current_data,
+):
+    if not n_clicks or not target_id or not current_data:
+        return no_update
+
+    clean_name = (new_name or "").strip()
+    clean_instructions = (new_instructions or "").strip()
+    clean_type = str(new_type or "noul").lower()
+
+    if not clean_name or not clean_instructions:
+        return no_update
+
+    if clean_type == "choice":
+        criteria = parse_choice_criteria(choice_text)
+        choices = list(criteria.keys())
+    elif clean_type == "score":
+        criteria = parse_score_criteria(score_text)
+        choices = []
+    else:  # noul
+        criteria = {
+            "true": (noul_true or "").strip() or "Target condition or spec is strictly met with zero defects.",
+            "false": (noul_false or "").strip() or "Target condition failed, spec missed, or non-conformance occurred.",
+        }
+        choices = []
+
+    updated = []
+    found_match = False
+
+    for item in current_data:
+        q_dict = dict(item)
+        qid = q_dict.get("id") or q_dict.get("name")
+        qname = q_dict.get("name")
+        if qid == target_id or qname == target_id:
+            q_dict["name"] = clean_name
+            q_dict["id"] = clean_name
+            q_dict["type"] = clean_type
+            q_dict["instructions"] = clean_instructions
+            q_dict["prompt"] = clean_instructions
+            q_dict["criteria"] = criteria
+            q_dict["choices"] = choices
+            found_match = True
+        updated.append(q_dict)
+
+    if not found_match:
+        return False, no_update
+
+    return False, updated
+
+
+# 12. Run Decision Evaluation Callback (Supports selected models from decisions panel)
 @app.callback(
     Output("decisions-panel-content", "children"),
-    Output("decisions-status-indicator", "children"),
     Output("runs-history-store", "data"),
     Output("latest-results-store", "data"),
     Input("run-button", "n_clicks"),
     State("document-text-input", "value"),
     State("active-questions-store", "data"),
-    State("model-toggle-0", "checked"),
-    State("model-toggle-1", "checked"),
-    State("model-toggle-2", "checked"),
-    State("model-toggle-3", "checked"),
-    State("model-select-0", "value"),
-    State("model-select-1", "value"),
-    State("model-select-2", "value"),
-    State("model-select-3", "value"),
+    State("decisions-model-select", "value"),
     State("runs-history-store", "data"),
     State("preset-document-select", "value"),
     State("inspect-panels-state", "data"),
@@ -741,62 +823,44 @@ def run_inspection(
     n_clicks,
     text,
     questions_data,
-    m0_on,
-    m1_on,
-    m2_on,
-    m3_on,
-    m0_val,
-    m1_val,
-    m2_val,
-    m3_val,
+    selected_models,
     history_data,
     preset_id,
     panels_state,
 ):
     if not n_clicks:
-        return no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update
 
     threshold = get_default_threshold()
-    active_pairs = []
-    for idx, (is_on, m_val) in enumerate([
-        (m0_on, m0_val),
-        (m1_on, m1_val),
-        (m2_on, m2_val),
-        (m3_on, m3_val),
-    ]):
-        if is_on and m_val:
-            active_pairs.append((idx, m_val))
-
-    if not active_pairs:
+    models = selected_models or []
+    if not models:
         empty_warning = html.Div(
-            dmc.Alert("Please select at least one active model in the header selectors.", color="red", title="No Model Active")
+            dmc.Alert("Please select at least one active model in the decisions model selector.", color="red", title="No Model Active")
         )
-        return empty_warning, "Error: No model active", no_update, no_update
+        return empty_warning, no_update, no_update
 
     if not text or not text.strip():
         empty_warning = html.Div(
             dmc.Alert("Process log text is empty. Please select or paste a log to inspect.", color="yellow", title="Empty Text")
         )
-        return empty_warning, "Warning: Empty input", no_update, no_update
+        return empty_warning, no_update, no_update
 
-    q_objs = [DecisionQuestion.from_dict(d) for d in questions_data]
-    results = [run_model_inference(m_name, text, q_objs, float(threshold), model_index=slot_idx) for slot_idx, m_name in active_pairs]
-    active_models = [m_name for _, m_name in active_pairs]
+    try:
+        q_objs = [DecisionQuestion.from_dict(d) for d in questions_data]
+        results = [run_model_inference(m_name, text, q_objs, float(threshold), model_index=slot_idx) for slot_idx, m_name in enumerate(models)]
+        active_models = list(models)
 
-    # Ground truth mapping: loaded from selected preset
-    ground_truth_map = None
-    if preset_id:
-        doc = get_preset_by_id(preset_id)
-        if doc and doc.states:
-            ground_truth_map = doc.states
-
-    is_max = bool(panels_state and (panels_state.get("maximized") == "decisions" or (panels_state.get("state_collapsed") and panels_state.get("questions_collapsed"))))
-    rendered_decisions = render_decisions_content(
-        results,
-        float(threshold),
-        ground_truth_map=ground_truth_map,
-        is_maximized=is_max,
-    )
+        is_max = bool(panels_state and (panels_state.get("maximized") == "decisions" or (panels_state.get("state_collapsed") and panels_state.get("questions_collapsed"))))
+        rendered_decisions = render_decisions_content(
+            results,
+            float(threshold),
+            is_maximized=is_max,
+        )
+    except Exception as exc:
+        err_warning = html.Div(
+            dmc.Alert(f"Inference execution failed: {exc}", color="red", title="Inference Error")
+        )
+        return err_warning, no_update, no_update
 
     # Append to run history
     now_str = datetime.datetime.now().strftime("%H:%M:%S")
@@ -814,7 +878,6 @@ def run_inspection(
     }
     updated_history = list(history_data or []) + [new_record]
 
-    status_text = f"Audit complete at {now_str} ({avg_latency:.0f}ms avg)"
     results_serialized = [r.to_dict() for r in results]
 
     # Save run execution to ./logs/{date_time}.json in UTC+8
@@ -832,7 +895,7 @@ def run_inspection(
         },
     )
 
-    return rendered_decisions, status_text, updated_history, results_serialized
+    return rendered_decisions, updated_history, results_serialized
 
 
 

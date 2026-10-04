@@ -77,27 +77,23 @@
     {
       "name": "excursion_severity_index",
       "type": "score",
-      "instructions": "What is the overall severity of the line disturbance or parameter excursion on a 0 to 3 scale?",
+      "instructions": "How severe is the line disturbance or parameter excursion reported in this log?",
       "criteria": [
-        "Level 0: Nominal run. Continuous flow, zero downtime, all telemetry strictly inside standard limits.",
-        "Level 1: Minor nuisance alarm or localized defect with negligible scrap impact (< 0.5%).",
-        "Level 2: Moderate excursion with line stoppage or out-of-spec lot requiring 100% sorting or rework.",
-        "Level 3: Critical equipment breakdown, thermal hazard, or major lot scrap event."
-      ],
-      "pass_condition": 1.0,
-      "required": true
+        "Nominal continuous flow with zero unscheduled downtime and telemetry strictly within standard control envelope.",
+        "Minor nuisance alarm or transient pause cleared rapidly with negligible scrap impact (< 0.5%).",
+        "Moderate excursion with unscheduled tool stoppage or partial lot hold requiring 100% sorting or rework.",
+        "Critical equipment breakdown, thermal runaway hazard, or major lot scrap event."
+      ]
     },
     {
       "name": "documentation_completeness",
       "type": "score",
-      "instructions": "How thorough and complete is the shift engineering log on a 0 to 2 scale?",
+      "instructions": "How thorough and complete is the shift engineering log?",
       "criteria": [
-        "Level 0: Minimal or vague log entry lacking quantitative telemetry or timestamps.",
-        "Level 1: Standard operational summary with yield numbers and basic fault flags.",
-        "Level 2: Comprehensive audit log with SPC telemetry, root-cause isolation, and technician signature."
-      ],
-      "pass_condition": 1.0,
-      "required": false
+        "Minimal or vague log entry lacking quantitative telemetry, timestamps, or root-cause notes.",
+        "Standard operational summary with basic yield figures and fault flags.",
+        "Comprehensive audit log with full SPC telemetry, root-cause isolation, and technician signature."
+      ]
     }
   ],
   "states": [
@@ -105,81 +101,31 @@
       "id": "REC_001",
       "title": "SMT Line 4 - PCBA Reflow Run (Yield 99.4%)",
       "category": "Surface Mount Technology",
-      "state": "PRODUCTION RUN REPORT: SMT LINE 4 Shift: Shift A (07:00 - 15:30) | Supervisor: K. Tanaka (Badge #4092) Product: Industrial Inverter Control Board Rev 2.4 Planned Batch: 4,800 units | Total Placed: 4,820 units\n\nMETROLOGY & YIELD:\n- First Pass Inspection (AOI): 99.65%\n- Final Functional Test Yield: 99.42% (Target Spec: >= 98.50%)\n- Total Defect Scrap: 28 boards (14 component misalignments, 14 tombstoned C0402 caps)\n\nOPERATIONAL METRICS:\n- Unscheduled Stoppage & Downtime: 0 minutes (Continuous line flow)\n- Feeder micro-stops: 2 minor tape splices cleared within 40 seconds\n- Solder Paste Inspection (SPI): Height 124um (Target 120-135um). Volume: 101.4% nominal.\n- Peak Reflow Temperature Zone 5: 242.1C (Control window: 238C - 245C).\n\nDISPOSITION:\nLot passed all automated quality gates. Lot release approved by Shift QA Lead.",
-      "truth": {
-        "yield_target_met": true,
-        "line_stoppage_flag": false,
-        "parameter_drift": false,
-        "root_cause_documented": true,
-        "primary_defect_type": "none",
-        "disposition_recommendation": "direct_release",
-        "excursion_severity_index": 0.0,
-        "documentation_completeness": 2.0
-      }
+      "state": "PRODUCTION RUN REPORT: SMT LINE 4 Shift: Shift A (07:00 - 15:30) | Supervisor: K. Tanaka (Badge #4092) Product: Industrial Inverter Control Board Rev 2.4 Planned Batch: 4,800 units | Total Placed: 4,820 units\n\nMETROLOGY & YIELD:\n- First Pass Inspection (AOI): 99.65%\n- Final Functional Test Yield: 99.42% (Target Spec: >= 98.50%)\n- Total Defect Scrap: 28 boards (14 component misalignments, 14 tombstoned C0402 caps)\n\nOPERATIONAL METRICS:\n- Unscheduled Stoppage & Downtime: 0 minutes (Continuous line flow)\n- Feeder micro-stops: 2 minor tape splices cleared within 40 seconds\n- Solder Paste Inspection (SPI): Height 124um (Target 120-135um). Volume: 101.4% nominal.\n- Peak Reflow Temperature Zone 5: 242.1C (Control window: 238C - 245C).\n\nDISPOSITION:\nLot passed all automated quality gates. Lot release approved by Shift QA Lead."
     },
     {
       "id": "REC_002",
       "title": "Bay 3 Etch Chamber B - Plasma Drift & Excursion",
       "category": "Semiconductor Wafer Fab",
-      "state": "EQUIPMENT INCIDENT LOG: DRY ETCH BAY 3 Equipment ID: Lam-Kiyo-Chamber-B Tool State: DOWN - INTERRUPTED Timestamp: 11:42:18 UTC | Recipe: Poly_Gate_Etch_v12 Lot ID: WF-2026-90412 (25 Wafers)\n\nINCIDENT DETAILS:\nAt step 4 of main etch (38s elapsed), RF match network auto-tuning failed. Reflected RF power spiked to 145W (Permissible upper limit: 15W). Chamber pressure surged from nominal 12.0 mTorr to 48.5 mTorr within 3.2 seconds due to turbo throttle valve hunting.\n\nINTERVENTION:\nOptical emission spectrometer (OES) endpoint trigger failed. EMO interlock triggered automatic plasma dump and N2 purge.\n- Unscheduled Downtime: 85 minutes active tool stoppage.\n- Wafer Inspection: 4 wafers (#21-#25) suffered severe over-etch trench punch-through. Lot yield estimated at 84.0%.\n- Root Cause Identified: Turbo molecular pump foreline pressure sensor transducer calibration drifted by +34% due to polymer byproduct buildup.\n\nACTION:\nLot quarantined in Sector B. Preventative clean required before requalification.",
-      "truth": {
-        "yield_target_met": false,
-        "line_stoppage_flag": true,
-        "parameter_drift": true,
-        "root_cause_documented": true,
-        "primary_defect_type": "rf_plasma_drift",
-        "disposition_recommendation": "containment_quarantine",
-        "excursion_severity_index": 2.0,
-        "documentation_completeness": 2.0
-      }
+      "state": "EQUIPMENT INCIDENT LOG: DRY ETCH BAY 3 Equipment ID: Lam-Kiyo-Chamber-B Tool State: DOWN - INTERRUPTED Timestamp: 11:42:18 UTC | Recipe: Poly_Gate_Etch_v12 Lot ID: WF-2026-90412 (25 Wafers)\n\nINCIDENT DETAILS:\nAt step 4 of main etch (38s elapsed), RF match network auto-tuning failed. Reflected RF power spiked to 145W (Permissible upper limit: 15W). Chamber pressure surged from nominal 12.0 mTorr to 48.5 mTorr within 3.2 seconds due to turbo throttle valve hunting.\n\nINTERVENTION:\nOptical emission spectrometer (OES) endpoint trigger failed. EMO interlock triggered automatic plasma dump and N2 purge.\n- Unscheduled Downtime: 85 minutes active tool stoppage.\n- Wafer Inspection: 4 wafers (#21-#25) suffered severe over-etch trench punch-through. Lot yield estimated at 84.0%.\n- Root Cause Identified: Turbo molecular pump foreline pressure sensor transducer calibration drifted by +34% due to polymer byproduct buildup.\n\nACTION:\nLot quarantined in Sector B. Preventative clean required before requalification."
     },
     {
       "id": "REC_003",
       "title": "Die Cast Cell 2 - Cold Shut & Ladle Misfeed",
       "category": "High Pressure Die Casting",
-      "state": "CELL RUN LOG: DIE CASTING UNIT #2 Machine: 850T Toshiba Cold Chamber Die Caster Part: Transmission Housing Cover (Alloy: A380 Aluminum) Date: Current Shift\n\nPROCESS TELEMETRY:\n- Shot Count: 620 cycles attempted, 541 acceptable parts.\n- Run Yield: 87.25% (Target threshold: >= 98.50% - FAILED).\n- Metal Temperature: Ladle pyrometer recorded molten metal dipping to 642C (Spec limit: 670C +- 10C) between cycles 180 and 240.\n- Injection Profile: Fast shot velocity 4.2 m/s, intensification pressure 78 MPa.\n\nDEFECT ANALYSIS:\n- 79 parts rejected at automated ultrasonic inspection due to visible cold shuts and wall porosity along the rear fluid mounting flange.\n- Unscheduled Line Stoppage: Unit halted for 42 minutes to purge ladle delivery nozzle and replace heating immersion thermocouple.\n- Root Cause: Ladle pre-heater burner pilot failure led to thermal loss in transfer trough.\n\nSTATUS:\nTotal lot quarantined for 100% acoustic resonance testing. Scrap authorization pending metallurgical review.",
-      "truth": {
-        "yield_target_met": false,
-        "line_stoppage_flag": true,
-        "parameter_drift": true,
-        "root_cause_documented": true,
-        "primary_defect_type": "porosity",
-        "disposition_recommendation": "containment_quarantine",
-        "excursion_severity_index": 2.0,
-        "documentation_completeness": 2.0
-      }
+      "state": "CELL RUN LOG: DIE CASTING UNIT #2 Machine: 850T Toshiba Cold Chamber Die Caster Part: Transmission Housing Cover (Alloy: A380 Aluminum) Date: Current Shift\n\nPROCESS TELEMETRY:\n- Shot Count: 620 cycles attempted, 541 acceptable parts.\n- Run Yield: 87.25% (Target threshold: >= 98.50% - FAILED).\n- Metal Temperature: Ladle pyrometer recorded molten metal dipping to 642C (Spec limit: 670C +- 10C) between cycles 180 and 240.\n- Injection Profile: Fast shot velocity 4.2 m/s, intensification pressure 78 MPa.\n\nDEFECT ANALYSIS:\n- 79 parts rejected at automated ultrasonic inspection due to visible cold shuts and wall porosity along the rear fluid mounting flange.\n- Unscheduled Line Stoppage: Unit halted for 42 minutes to purge ladle delivery nozzle and replace heating immersion thermocouple.\n- Root Cause: Ladle pre-heater burner pilot failure led to thermal loss in transfer trough.\n\nSTATUS:\nTotal lot quarantined for 100% acoustic resonance testing. Scrap authorization pending metallurgical review."
     },
     {
       "id": "REC_004",
       "title": "Formation Rack 04 - Thermal Runaway Risk Flag",
       "category": "EV Battery Cell Manufacturing",
-      "state": "LINE DISPATCH: EV BATTERY FORMATION & AGING Line: Formation Hall 2, Rack Matrix 04 Cell Format: 4680 Cylindrical High-Nickel NMC Lot: BAT-4680-LOT88\n\nINSPECTION SUMMARY:\n- Lot Size: 1,440 cells under C/10 formation charge protocol.\n- Overall Yield: 96.8% (Target: >= 98.50% - FAILED).\n\nTHERMAL & PARAMETRIC EXCURSIONS:\n- Multi-point IR thermal scanner flagged Channel 82 and Channel 83: Surface temperature escalated to 64.8C during step 3 constant-current charge (Threshold cutoff: 55.0C).\n- DC-IR (Internal Resistance) testing showed 18 cells with internal resistance exceeding 22.4 mOhm (Spec nominal: 14.5 +- 2.0 mOhm).\n- Automated fire suppression pre-action solenoid armed. Line automatically switched to fail-safe isolated discharge.\n- Stoppage Duration: Formation circuit suspended for 58 minutes during cooldown and nitrogen blanket verification.\n- Root Cause: Localized separator pinhole puncture from burr on negative electrode slit edge.\n\nACTION:\nTray 04 quarantined. Defective cells rejected. Remaining cells shifted to 14-day extended open-circuit voltage degradation monitoring.",
-      "truth": {
-        "yield_target_met": false,
-        "line_stoppage_flag": true,
-        "parameter_drift": true,
-        "root_cause_documented": true,
-        "primary_defect_type": "thermal_gradient",
-        "disposition_recommendation": "containment_quarantine",
-        "excursion_severity_index": 3.0,
-        "documentation_completeness": 2.0
-      }
+      "state": "LINE DISPATCH: EV BATTERY FORMATION & AGING Line: Formation Hall 2, Rack Matrix 04 Cell Format: 4680 Cylindrical High-Nickel NMC Lot: BAT-4680-LOT88\n\nINSPECTION SUMMARY:\n- Lot Size: 1,440 cells under C/10 formation charge protocol.\n- Overall Yield: 96.8% (Target: >= 98.50% - FAILED).\n\nTHERMAL & PARAMETRIC EXCURSIONS:\n- Multi-point IR thermal scanner flagged Channel 82 and Channel 83: Surface temperature escalated to 64.8C during step 3 constant-current charge (Threshold cutoff: 55.0C).\n- DC-IR (Internal Resistance) testing showed 18 cells with internal resistance exceeding 22.4 mOhm (Spec nominal: 14.5 +- 2.0 mOhm).\n- Automated fire suppression pre-action solenoid armed. Line automatically switched to fail-safe isolated discharge.\n- Stoppage Duration: Formation circuit suspended for 58 minutes during cooldown and nitrogen blanket verification.\n- Root Cause: Localized separator pinhole puncture from burr on negative electrode slit edge.\n\nACTION:\nTray 04 quarantined. Defective cells rejected. Remaining cells shifted to 14-day extended open-circuit voltage degradation monitoring."
     },
     {
       "id": "REC_005",
       "title": "CNC Line 6 - Aerospace Impeller Milling",
       "category": "Precision 5-Axis Machining",
-      "state": "SHIFT LOG: 5-AXIS CNC MACHINING CENTER Machine: DMG Mori NMV-5000 5-Axis Component: Titanium Ti-6Al-4V Blisk Impeller Drawing Revision: D-08\n\nMETROLOGY & PROCESS SUMMARY:\n- Scheduled Batch: 12 Blisk Components.\n- Units Completed: 12 conforming parts. Yield: 100.0% (Spec: >= 98.50%).\n- CMM (Coordinate Measuring Machine) Report: Maximum blade profile deviation +0.007mm (Tolerance envelope: +- 0.015mm). Zero non-conformance.\n- Spindle load: Averaged 44.8% (Peak 62% in roughing passes, limit 80%).\n- Vibration Analysis: FFT accelerometer sensors showed peak harmonic at 1,840 Hz (0.42 mm/s RMS, baseline healthy threshold < 1.0 mm/s).\n- Coolant Concentration & Pressure: 9.2% water-soluble synthetic at 70 bar high-pressure through-spindle.\n\nSTOPPAGE & DOWNTIME:\n- 0 minutes unscheduled stoppage. Scheduled index tool change completed in 4 minutes during cycle boundary.\n- Tool wear monitoring: Endmill flank wear VB = 0.08mm (Re-grind limit 0.15mm).\n\nDISPOSITION:\nAll 12 impellers certified for ultrasonic wash, final passivation, and non-destructive penetrant inspection.",
-      "truth": {
-        "yield_target_met": true,
-        "line_stoppage_flag": false,
-        "parameter_drift": false,
-        "root_cause_documented": true,
-        "primary_defect_type": "none",
-        "disposition_recommendation": "direct_release",
-        "excursion_severity_index": 0.0,
-        "documentation_completeness": 2.0
-      }
+      "state": "SHIFT LOG: 5-AXIS CNC MACHINING CENTER Machine: DMG Mori NMV-5000 5-Axis Component: Titanium Ti-6Al-4V Blisk Impeller Drawing Revision: D-08\n\nMETROLOGY & PROCESS SUMMARY:\n- Scheduled Batch: 12 Blisk Components.\n- Units Completed: 12 conforming parts. Yield: 100.0% (Spec: >= 98.50%).\n- CMM (Coordinate Measuring Machine) Report: Maximum blade profile deviation +0.007mm (Tolerance envelope: +- 0.015mm). Zero non-conformance.\n- Spindle load: Averaged 44.8% (Peak 62% in roughing passes, limit 80%).\n- Vibration Analysis: FFT accelerometer sensors showed peak harmonic at 1,840 Hz (0.42 mm/s RMS, baseline healthy threshold < 1.0 mm/s).\n- Coolant Concentration & Pressure: 9.2% water-soluble synthetic at 70 bar high-pressure through-spindle.\n\nSTOPPAGE & DOWNTIME:\n- 0 minutes unscheduled stoppage. Scheduled index tool change completed in 4 minutes during cycle boundary.\n- Tool wear monitoring: Endmill flank wear VB = 0.08mm (Re-grind limit 0.15mm).\n\nDISPOSITION:\nAll 12 impellers certified for ultrasonic wash, final passivation, and non-destructive penetrant inspection."
     }
   ]
 }

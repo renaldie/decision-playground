@@ -51,20 +51,6 @@ def create_add_question_modal():
                     value="",
                     size="xs",
                 ),
-                dmc.Group([
-                    dmc.Checkbox(
-                        id="new-q-required",
-                        label="Required Check (Failure blocks auto-approval)",
-                        checked=True,
-                        size="xs",
-                    ),
-                    dmc.Checkbox(
-                        id="new-q-needs-record",
-                        label="Needs Audit Record",
-                        checked=False,
-                        size="xs",
-                    ),
-                ], gap="md"),
                 dmc.Group(
                     justify="flex-end",
                     children=[

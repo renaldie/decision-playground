@@ -1,15 +1,15 @@
 """
 Decisions panel component (Right Column).
-Displays the automated process verdict, side-by-side model predictions for up to 4 models,
-probability meters with threshold markers, extracted evidence, ground truth comparison badges,
-and the engineering action dispatch.
+Displays side-by-side model predictions for up to 4 models, calibrated probability
+and confidence meters with threshold indicators, and extracted log excerpts.
 Includes expandable/collapsible card controls to occupy full screen or hide to side ribbon.
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Optional, Any
 import dash_mantine_components as dmc
 from dash import html
 from dash_iconify import DashIconify
 from src.types import ModelResult, QuestionEvaluation
+from src.config import get_available_models, get_default_model
 
 
 def render_empty_decisions():
@@ -20,250 +20,335 @@ def render_empty_decisions():
             "flexDirection": "column",
             "alignItems": "center",
             "justifyContent": "center",
-            "height": "70%",
+            "height": "100%",
+            "minHeight": "240px",
             "color": "#64748b",
             "textAlign": "center",
+            "padding": "32px 16px",
         },
         children=[
-            DashIconify(icon="tabler:cpu", width=42, color="#334155"),
-            dmc.Text("Select a process snippet and press Run.", size="sm", fw=500, c="#94a3b8", mt="md"),
-            dmc.Text("Evaluates side-by-side Ollama models against your manufacturing criteria.", size="xs", c="dimmed", mt=4),
+            html.Div(
+                style={
+                    "width": "54px",
+                    "height": "54px",
+                    "borderRadius": "50%",
+                    "backgroundColor": "rgba(56, 189, 248, 0.08)",
+                    "display": "flex",
+                    "alignItems": "center",
+                    "justifyContent": "center",
+                    "marginBottom": "14px",
+                    "border": "1px solid rgba(56, 189, 248, 0.18)",
+                },
+                children=[DashIconify(icon="tabler:cpu", width=26, color="#38bdf8")],
+            ),
+            dmc.Text("Ready for Decision Inference", size="sm", fw=600, c="#f1f5f9"),
+            dmc.Text(
+                "Select a state, questions, and one or more models, and click Run.",
+                size="xs",
+                c="#94a3b8",
+                mt=6,
+                style={"maxWidth": "320px", "lineHeight": 1.5},
+            ),
         ]
     )
 
 
-def check_is_match(ev: QuestionEvaluation, ground_truth: Optional[Any]) -> Optional[bool]:
-    """Determines whether the model prediction matches the ground truth."""
-    if ground_truth is None:
-        return None
-    q_type = str(getattr(ev, "question_type", "noul")).lower()
-    if q_type in ("score", "ordinal"):
-        try:
-            gt_num = float(ground_truth)
-            pred_score = float(ev.score if ev.score is not None else ev.p_true)
-            return abs(pred_score - gt_num) < 0.6
-        except (ValueError, TypeError):
-            return False
-    elif q_type in ("choice", "categorical"):
-        gt_str = str(ground_truth).strip().lower()
-        pred_choice = str(ev.selected_choice or "").strip().lower()
-        return pred_choice == gt_str
-    else:  # noul / bool
-        if isinstance(ground_truth, str):
-            gt_bool = ground_truth.strip().lower() in ("true", "1", "yes")
+NOUL_10_GRADIENT = [
+    "#172554",  # 0-10%  (deep dark blue)
+    "#1e3a8a",  # 10-20%
+    "#1e40af",  # 20-30%
+    "#1d4ed8",  # 30-40%
+    "#2563eb",  # 40-50%
+    "#3b82f6",  # 50-60%
+    "#339af0",  # 60-70% (Mantine blue outline font color)
+    "#60a5fa",  # 70-80%
+    "#93c5fd",  # 80-90%
+    "#bfdbfe",  # 90-100% (luminous light blue)
+]
+
+CHOICE_10_GRADIENT = [
+    "#083344",  # 0-10%  (deep dark cyan)
+    "#164e63",  # 10-20%
+    "#155e75",  # 20-30%
+    "#0e7490",  # 30-40%
+    "#0891b2",  # 40-50%
+    "#06b6d4",  # 50-60%
+    "#15aabf",  # 60-70% (Mantine cyan outline font color)
+    "#22d3ee",  # 70-80%
+    "#67e8f9",  # 80-90%
+    "#cffafe",  # 90-100% (luminous light cyan)
+]
+
+
+def get_score_gradient(num_steps: int) -> List[str]:
+    """Generates `num_steps` gradient colors in violet spectrum for Score levels."""
+    if num_steps <= 1:
+        return ["#8b5cf6"]
+    if num_steps == 2:
+        return ["#5b21b6", "#c084fc"]
+    if num_steps == 3:
+        return ["#4c1d95", "#7950f2", "#c084fc"]
+    if num_steps == 4:
+        # Standard: 4 levels (0, 1, 2, 3) when highest score is 3
+        return ["#4c1d95", "#6d28d9", "#7950f2", "#c084fc"]
+    if num_steps == 5:
+        return ["#4c1d95", "#5b21b6", "#7c3aed", "#8b5cf6", "#c084fc"]
+
+    palette = [
+        "#4c1d95", "#581c87", "#5b21b6", "#6d28d9", "#7c3aed",
+        "#7950f2", "#8b5cf6", "#a855f7", "#c084fc", "#d8b4fe"
+    ]
+    indices = [int(round(i * (len(palette) - 1) / (num_steps - 1))) for i in range(num_steps)]
+    return [palette[i] for i in indices]
+
+
+def render_stepped_gradient_meter(
+    pct: float,
+    num_steps: int,
+    gradient_colors: List[str],
+) -> html.Div:
+    """
+    Renders a stepped gradient meter bar with separate capsule segments.
+    Each capsule segment represents a discrete level/step with its specific gradient color,
+    filling smoothly based on the percentage (0 to 100%).
+    """
+    clamped_pct = max(0.0, min(100.0, float(pct)))
+    ratio = clamped_pct / 100.0
+
+    step_elements = []
+    for i in range(num_steps):
+        color = gradient_colors[i] if i < len(gradient_colors) else gradient_colors[-1]
+        step_min = i / num_steps
+        step_max = (i + 1) / num_steps
+
+        if ratio >= step_max:
+            fill_pct = 100.0
+        elif ratio <= step_min:
+            fill_pct = 0.0
         else:
-            gt_bool = bool(ground_truth)
-        pred_bool = (float(ev.p_true) >= 0.5)
-        return pred_bool == gt_bool
+            fill_pct = ((ratio - step_min) / (step_max - step_min)) * 100.0
+
+        is_lit = fill_pct > 0
+        step_elements.append(
+            html.Div(
+                style={
+                    "flex": "1",
+                    "height": "7px",
+                    "backgroundColor": "rgba(255, 255, 255, 0.06)",
+                    "borderRadius": "3px",
+                    "overflow": "hidden",
+                    "position": "relative",
+                    "border": "1px solid rgba(255, 255, 255, 0.04)",
+                },
+                children=[
+                    html.Div(
+                        style={
+                            "width": f"{fill_pct:.1f}%",
+                            "height": "100%",
+                            "backgroundColor": color,
+                            "borderRadius": "2px",
+                            "boxShadow": f"0 0 6px {color}88" if is_lit else "none",
+                            "transition": "width 0.2s ease",
+                        }
+                    )
+                ]
+            )
+        )
+
+    return html.Div(
+        className="stepped-gradient-meter",
+        style={
+            "display": "flex",
+            "alignItems": "center",
+            "gap": "3px",
+            "width": "100%",
+            "marginTop": "7px",
+            "marginBottom": "6px",
+        },
+        children=step_elements,
+    )
+
+
+def render_continuous_gradient_meter(
+    pct: float,
+    gradient_colors: List[str],
+) -> html.Div:
+    """Alias for backwards compatibility, redirects to stepped capsule gradient meter."""
+    return render_stepped_gradient_meter(pct=pct, num_steps=len(gradient_colors), gradient_colors=gradient_colors)
 
 
 def render_evaluation_bar(
     ev: QuestionEvaluation,
     threshold_percent: float,
     model_color: str,
-    ground_truth: Optional[Any] = None,
+    **kwargs,
 ):
-    """Renders a single question evaluation row comparing prediction directly against truth without PASS/FAIL status badges."""
+    """Renders a single question decision item with type badge, predicted value, stepped capsule meter, and log excerpt."""
     q_type = str(getattr(ev, "question_type", "noul")).lower()
     is_score = (q_type in ("score", "ordinal"))
     is_choice = (q_type in ("choice", "categorical"))
 
-    is_match = check_is_match(ev, ground_truth)
-
     if is_score:
+        top_level = float(getattr(ev, "metadata", {}).get("top_level", 0.0))
+        if top_level <= 0:
+            top_level = 3.0
         score_val = float(ev.score if ev.score is not None else ev.p_true)
-        p_pct = min(100.0, max(0.0, (score_val / 3.0) * 100.0))
-        pred_label = f"Level {int(round(score_val))}"
-        pred_detail = f"Score {score_val:.1f}"
-        truth_label = f"Level {int(float(ground_truth))}" if ground_truth is not None else None
-        metric_str = f"Rubric 0-3"
-    elif is_choice:
-        p_pct = float(ev.confidence) * 100.0
-        choice_text = ev.selected_choice or "-"
-        pred_label = choice_text
-        pred_detail = f"{p_pct:.1f}%"
-        truth_label = str(ground_truth) if ground_truth is not None else None
-        metric_str = f"Choice: {choice_text}"
-    else:  # noul / bool
-        p_val = float(ev.p_true)
-        pred_bool = (p_val >= 0.5)
-        conf_pct = (p_val if pred_bool else (1.0 - p_val)) * 100.0
-        pred_label = "True" if pred_bool else "False"
-        pred_detail = f"{conf_pct:.1f}%"
-        truth_label = str(bool(ground_truth)) if ground_truth is not None else None
-        p_pct = p_val * 100.0
-        metric_str = f"P(true) = {p_val * 100:.1f}%"
-
-    # Color progress bar: teal if match, orange if diff, cyan if no truth
-    if is_match is True:
-        bar_color = "teal"
-    elif is_match is False:
-        bar_color = "orange"
-    else:
-        bar_color = "cyan"
-
-    # Match badge
-    match_badge = None
-    if is_match is not None:
-        if is_match:
-            match_badge = dmc.Badge(
-                "✓ Match",
-                color="teal",
-                variant="light",
-                size="xs",
-                style={"fontFamily": "'JetBrains Mono', monospace", "fontWeight": 700},
-            )
-        else:
-            match_badge = dmc.Badge(
-                "✗ Diff",
-                color="orange",
-                variant="light",
-                size="xs",
-                style={"fontFamily": "'JetBrains Mono', monospace", "fontWeight": 700},
-            )
-
-    # Prediction tag & Truth tag
-    pred_tag = html.Span([
-        html.Span("Pred: ", style={"color": "#94a3b8", "fontSize": "11px", "fontWeight": 500}),
-        html.Span(
+        p_pct = min(100.0, max(0.0, (score_val / top_level) * 100.0))
+        pred_label = f"Score {score_val:.2f} / {int(top_level)}"
+        metric_str = f"{ev.confidence*100:.0f}% conf" if ev.confidence > 0 else ""
+        type_badge = dmc.Badge(
+            "SCORE",
+            size="xs",
+            variant="outline",
+            color="violet",
+            style={"fontSize": "9px", "height": "18px", "padding": "0 5px", "fontFamily": "'JetBrains Mono', monospace"},
+        )
+        pred_badge = dmc.Badge(
             pred_label,
-            style={
-                "color": "#34d399" if is_match is True else ("#fb923c" if is_match is False else "#38bdf8"),
-                "fontWeight": 700,
-                "fontSize": "11.5px",
-                "fontFamily": "'JetBrains Mono', monospace",
-            },
-        ),
-        html.Span(
-            f" ({pred_detail})" if pred_detail else "",
-            style={"color": "#64748b", "fontSize": "10.5px", "marginLeft": "3px", "fontFamily": "'JetBrains Mono', monospace"},
-        ),
-    ])
+            color="violet",
+            variant="light",
+            size="xs",
+            style={"fontFamily": "'JetBrains Mono', monospace", "height": "20px"},
+        )
+        num_steps = int(top_level) + 1
+        gradient_colors = get_score_gradient(num_steps)
+    elif is_choice:
+        p_pct = ev.confidence * 100.0
+        choice_val = ev.selected_choice if ev.selected_choice else "-"
+        metric_str = f"{p_pct:.1f}%"
+        type_badge = dmc.Badge(
+            "CHOICE",
+            size="xs",
+            variant="outline",
+            color="cyan",
+            style={"fontSize": "9px", "height": "18px", "padding": "0 5px", "fontFamily": "'JetBrains Mono', monospace"},
+        )
+        pred_badge = dmc.Badge(
+            choice_val,
+            color="cyan",
+            variant="light",
+            size="xs",
+            style={"fontFamily": "'JetBrains Mono', monospace", "textTransform": "none", "height": "20px"},
+        )
+        num_steps = 10
+        gradient_colors = CHOICE_10_GRADIENT
+    else:  # noul / boolean
+        p_pct = ev.p_true * 100.0
+        model_pred_bool = (ev.p_true >= 0.5)
+        metric_str = f"{p_pct:.1f}%"
+        type_badge = dmc.Badge(
+            "NOUL",
+            size="xs",
+            variant="outline",
+            color="blue",
+            style={"fontSize": "9px", "height": "18px", "padding": "0 5px", "fontFamily": "'JetBrains Mono', monospace"},
+        )
+        pred_badge = dmc.Badge(
+            "TRUE" if model_pred_bool else "FALSE",
+            color="blue",
+            variant="light",
+            size="xs",
+            style={"fontFamily": "'JetBrains Mono', monospace", "fontWeight": 700, "height": "20px"},
+        )
+        num_steps = 10
+        gradient_colors = NOUL_10_GRADIENT
 
-    truth_tag = None
-    if truth_label is not None:
-        truth_tag = html.Span([
-            html.Span("Truth: ", style={"color": "#64748b", "fontSize": "11px", "fontWeight": 500}),
-            html.Span(
-                truth_label,
-                style={
-                    "color": "#e2e8f0",
-                    "fontWeight": 600,
-                    "fontSize": "11.5px",
-                    "fontFamily": "'JetBrains Mono', monospace",
-                    "backgroundColor": "rgba(255,255,255,0.06)",
-                    "padding": "1px 6px",
-                    "borderRadius": "3px",
-                    "border": "1px solid rgba(255,255,255,0.1)",
-                },
-            ),
-        ])
+    raw_excerpt = ev.evidence if ev.evidence else ev.rationale
+    excerpt_text = raw_excerpt.strip().strip('"').strip("'") if raw_excerpt else ""
+
+    meter_bar = render_stepped_gradient_meter(
+        pct=p_pct,
+        num_steps=num_steps,
+        gradient_colors=gradient_colors,
+    )
 
     return html.Div(
         style={
-            "marginBottom": "10px",
-            "padding": "8px 10px",
-            "background": "rgba(255,255,255,0.015)",
-            "borderRadius": "4px",
-            "border": "1px solid rgba(255,255,255,0.03)",
+            "marginBottom": "8px",
+            "padding": "9px 12px",
+            "background": "rgba(255, 255, 255, 0.02)",
+            "borderRadius": "5px",
+            "border": "1px solid rgba(255, 255, 255, 0.04)",
+            "transition": "border-color 0.15s ease",
         },
         children=[
-            # Top row: Question Name + Match Badge (left), Pred + Truth (right)
+            # Top row: Type badge + Question Name on left, Prediction badge + Metric on right
             dmc.Group(
                 justify="space-between",
                 children=[
                     dmc.Group([
+                        type_badge,
                         dmc.Text(
                             ev.question_name,
                             fw=600,
                             size="xs",
-                            style={"fontFamily": "'JetBrains Mono', monospace", "color": "#f8fafc"},
+                            style={"fontFamily": "'JetBrains Mono', monospace", "color": "#f1f5f9"},
                         ),
-                        match_badge if match_badge else html.Span(),
                     ], gap=8),
                     dmc.Group([
-                        pred_tag,
-                        html.Span("•", style={"color": "#334155", "fontSize": "10px"}) if truth_tag else html.Span(),
-                        truth_tag if truth_tag else html.Span(),
+                        pred_badge,
+                        dmc.Text(
+                            metric_str,
+                            size="xs",
+                            fw=600,
+                            c="#94a3b8",
+                            style={"fontFamily": "'JetBrains Mono', monospace"},
+                        ),
                     ], gap=8),
-                ],
+                ]
             ),
-            # Probability / Confidence meter
-            html.Div(
-                className="prob-meter-container",
-                style={"marginTop": "5px", "marginBottom": "4px"},
-                children=[
-                    dmc.Progress(value=p_pct, color=bar_color, size="sm", radius="xs"),
-                ],
-            ),
-            # Bottom row: Evidence snippet & raw metric
+            # Stepped Gradient Meter container
+            meter_bar,
+            # Log excerpt / rationale
             dmc.Group(
-                justify="space-between",
+                gap=6,
+                style={"marginTop": "4px"},
                 children=[
+                    DashIconify(icon="tabler:quote", width=12, color="#64748b"),
                     dmc.Text(
-                        f"Evidence: \"{ev.evidence}\"" if ev.evidence else ev.rationale,
+                        excerpt_text if excerpt_text else "No log excerpt extracted",
                         size="xs",
                         c="#94a3b8",
                         style={
                             "fontStyle": "italic",
-                            "maxWidth": "80%",
+                            "maxWidth": "94%",
                             "overflow": "hidden",
                             "textOverflow": "ellipsis",
                             "whiteSpace": "nowrap",
+                            "fontSize": "11.5px",
                         },
                     ),
-                    dmc.Text(
-                        metric_str,
-                        size="xs",
-                        c="#64748b",
-                        fw=500,
-                        style={"fontFamily": "'JetBrains Mono', monospace", "fontSize": "10.5px"},
-                    ),
-                ],
-            ),
-        ],
+                ]
+            ) if excerpt_text else html.Span(),
+        ]
     )
 
 
 def render_model_decision_card(
     model_result: ModelResult,
     threshold_percent: float,
-    ground_truth_map: Optional[Dict[str, Any]] = None,
+    **kwargs,
 ):
-    """Renders a decisions card for a single model with prediction vs truth comparison."""
-    total_count = len(model_result.evaluations)
+    """Renders a decisions card for a single model with its distinct color identity and clean layout."""
     m_color = model_result.model_color
+    total_count = len(model_result.evaluations)
 
     eval_bars = [
-        render_evaluation_bar(
-            e,
-            threshold_percent,
-            m_color,
-            ground_truth=(ground_truth_map.get(e.question_name) if ground_truth_map else None),
-        )
+        render_evaluation_bar(e, threshold_percent, m_color)
         for e in model_result.evaluations
     ]
 
-    # Header metric: Accuracy against ground truth if present, otherwise gate count
-    if ground_truth_map:
-        matches_count = sum(
-            1 for e in model_result.evaluations
-            if check_is_match(e, ground_truth_map.get(e.question_name))
-        )
-        acc_pct = (matches_count / total_count * 100) if total_count else 0
-        header_metric = dmc.Badge(
-            f"{matches_count}/{total_count} Matches ({acc_pct:.0f}%)",
-            color="teal" if matches_count == total_count else ("green" if acc_pct >= 60 else "orange"),
-            variant="light",
-            size="xs",
-            style={"fontFamily": "'JetBrains Mono', monospace", "fontWeight": 700},
-        )
-    else:
-        header_metric = dmc.Text(f"{total_count} Gates Evaluated", size="xs", c="dimmed")
-
     return html.Div(
         className="decisions-card",
-        style={"borderLeft": f"3px solid {m_color}"},
+        style={
+            "borderLeft": f"3px solid {m_color}",
+            "background": "linear-gradient(180deg, #11141c 0%, #0d0f16 100%)",
+            "border": "1px solid #1f2533",
+            "borderLeftWidth": "3px",
+            "borderRadius": "6px",
+            "padding": "12px 14px",
+            "boxShadow": "0 4px 16px rgba(0, 0, 0, 0.25)",
+        },
         children=[
             # Model Header
             dmc.Group(
@@ -272,19 +357,33 @@ def render_model_decision_card(
                     dmc.Group([
                         html.Span(
                             className="dot-indicator",
-                            style={"backgroundColor": m_color, "boxShadow": f"0 0 6px {m_color}88"}
+                            style={"backgroundColor": m_color, "boxShadow": f"0 0 8px {m_color}"}
                         ),
-                        dmc.Text(model_result.model_name, fw=700, size="xs", c="white", style={"fontFamily": "'JetBrains Mono', monospace"}),
+                        dmc.Text(
+                            model_result.model_name,
+                            fw=700,
+                            size="xs",
+                            c="white",
+                            style={"fontFamily": "'JetBrains Mono', monospace", "letterSpacing": "-0.01em"}
+                        ),
                         dmc.Badge(
                             f"{model_result.latency_ms:.0f} ms",
                             variant="outline",
                             color="gray",
                             size="xs",
+                            leftSection=DashIconify(icon="tabler:bolt", width=11, color="#94a3b8"),
+                            style={"fontFamily": "'JetBrains Mono', monospace"},
                         ),
                     ], gap=8),
-                    header_metric,
+                    dmc.Badge(
+                        f"{total_count} criteria(s)",
+                        variant="light",
+                        color="dark",
+                        size="xs",
+                        style={"fontFamily": "'JetBrains Mono', monospace", "color": "#94a3b8"},
+                    ),
                 ],
-                style={"marginBottom": "10px", "paddingBottom": "6px", "borderBottom": "1px solid rgba(255,255,255,0.06)"},
+                style={"marginBottom": "10px", "paddingBottom": "8px", "borderBottom": "1px solid rgba(255, 255, 255, 0.06)"},
             ),
 
             # Evaluation items
@@ -296,14 +395,14 @@ def render_model_decision_card(
 def render_decisions_content(
     results: List[ModelResult],
     threshold_percent: float,
-    ground_truth_map: Optional[Dict[str, Any]] = None,
+    ground_truth_map: Optional[Any] = None,
     is_maximized: bool = False,
 ):
     """Full rendered decisions content (supports side-by-side comparison for up to 4 models)."""
     if not results:
         return render_empty_decisions()
 
-    model_cards = [render_model_decision_card(r, threshold_percent, ground_truth_map) for r in results]
+    model_cards = [render_model_decision_card(r, threshold_percent) for r in results]
 
     # Grid columns layout: if maximized or spacious, display all models completely side-by-side!
     grid_cols = f"repeat({len(model_cards)}, minmax(280px, 1fr))" if is_maximized else ("1fr" if len(model_cards) <= 1 else "repeat(auto-fit, minmax(320px, 1fr))")
@@ -325,7 +424,24 @@ def render_decisions_content(
     )
 
 
-def create_decisions_panel():
+def create_decisions_panel(
+    available_models: Optional[List[str]] = None,
+    default_models: Optional[List[str]] = None,
+):
+    if available_models is None:
+        try:
+            from src.ollama_client import get_cross_referenced_models
+            available_models = get_cross_referenced_models()
+        except Exception:
+            available_models = get_available_models()
+
+    if default_models is None:
+        def_m = get_default_model()
+        default_models = [def_m] if (def_m and def_m in available_models) else (available_models[:1] if available_models else [])
+
+    count = len(default_models)
+    btn_label = f"{count} model(s)" if count > 0 else "0 model"
+
     return html.Div(
         id="decisions-panel-wrapper",
         className="panel-wrapper",
@@ -343,15 +459,109 @@ def create_decisions_panel():
                         children=[
                             dmc.Group([
                                 dmc.Badge("DECISIONS", variant="light", color="gray", size="xs", radius="xs"),
-                                dmc.Text(
-                                    id="decisions-status-indicator",
-                                    children="Awaiting run...",
+                                # Real dropdown box for model selection
+                                dmc.Popover(
+                                    id="models-popover",
+                                    position="bottom-start",
+                                    shadow="md",
+                                    radius="xs",
+                                    withArrow=False,
+                                    children=[
+                                        dmc.PopoverTarget(
+                                            dmc.Button(
+                                                id="models-dropdown-btn",
+                                                children=btn_label,
+                                                size="xs",
+                                                variant="default",
+                                                rightSection=DashIconify(icon="tabler:chevron-down", width=12, color="#94a3b8"),
+                                                style={
+                                                    "backgroundColor": "#090a0f",
+                                                    "border": "1px solid #1f2430",
+                                                    "color": "#f1f5f9",
+                                                    "fontFamily": "'JetBrains Mono', monospace",
+                                                    "fontSize": "11px",
+                                                    "fontWeight": 500,
+                                                    "height": "26px",
+                                                    "padding": "0 10px",
+                                                },
+                                            )
+                                        ),
+                                        dmc.PopoverDropdown(
+                                            style={
+                                                "backgroundColor": "#0e1015",
+                                                "border": "1px solid #2a3142",
+                                                "padding": "8px 12px",
+                                                "minWidth": "160px",
+                                            },
+                                            children=[
+                                                dmc.CheckboxGroup(
+                                                    id="decisions-model-select",
+                                                    value=default_models,
+                                                    children=dmc.Stack(
+                                                        id="decisions-model-checkboxes",
+                                                        gap=6,
+                                                        children=[
+                                                            dmc.Checkbox(
+                                                                label=m,
+                                                                value=m,
+                                                                size="xs",
+                                                                color="blue",
+                                                                styles={
+                                                                    "input": {"cursor": "pointer", "backgroundColor": "#090a0f", "borderColor": "#2a3142"},
+                                                                    "label": {
+                                                                        "cursor": "pointer",
+                                                                        "fontFamily": "'JetBrains Mono', monospace",
+                                                                        "fontSize": "11px",
+                                                                        "color": "#f1f5f9",
+                                                                        "paddingLeft": "4px",
+                                                                    },
+                                                                },
+                                                            )
+                                                            for m in available_models
+                                                        ],
+                                                    ),
+                                                )
+                                            ]
+                                        )
+                                    ]
+                                ),
+                                # Run Button
+                                dmc.Button(
+                                    id="run-button",
+                                    children=[
+                                        html.Span(
+                                            className="run-btn-idle",
+                                            style={"display": "inline-flex", "alignItems": "center", "gap": "6px"},
+                                            children=[
+                                                DashIconify(icon="tabler:player-play-filled", width=12, color="#94a3b8"),
+                                                html.Span("Run"),
+                                            ]
+                                        ),
+                                        html.Span(
+                                            className="run-btn-loading",
+                                            style={"display": "none", "alignItems": "center", "gap": "6px"},
+                                            children=[
+                                                html.Span(className="animated-circle-spinner"),
+                                                html.Span("Running"),
+                                            ]
+                                        ),
+                                    ],
+                                    variant="filled",
                                     size="xs",
-                                    c="dimmed",
+                                    radius="xs",
+                                    style={
+                                        "fontWeight": 700,
+                                        "fontSize": "11.5px",
+                                        "height": "26px",
+                                        "backgroundColor": "#19202c",
+                                        "color": "#ffffff",
+                                        "border": "1px solid #2a3142",
+                                        "padding": "0 12px",
+                                        "cursor": "pointer",
+                                    },
                                 ),
                             ], gap="xs"),
                             dmc.Group([
-                                dmc.Badge(id="active-models-summary", children="2 Models Active", variant="outline", color="gray", size="xs"),
                                 dmc.Tooltip(
                                     label="Collapse to side",
                                     children=dmc.ActionIcon(

@@ -45,6 +45,57 @@ def get_installed_models() -> List[Dict[str, Any]]:
         return [{"name": m, "size": 0} for m in get_available_models()]
 
 
+def get_ollama_list_models() -> List[str]:
+    """Retrieves model names from local Ollama daemon or CLI `ollama list`."""
+    # Method 1: REST API /api/tags
+    try:
+        base_url = get_base_url()
+        req = urllib.request.Request(f"{base_url}/api/tags", headers={"User-Agent": "DecisionPlayground"})
+        with urllib.request.urlopen(req, timeout=2.0) as r:
+            data = json.loads(r.read().decode("utf-8"))
+            models = data.get("models", [])
+            names = [m["name"] for m in models if "name" in m]
+            if names:
+                return names
+    except Exception:
+        pass
+
+    # Method 2: CLI `ollama list` fallback
+    try:
+        import subprocess
+        res = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=2.5)
+        if res.returncode == 0:
+            lines = res.stdout.strip().splitlines()
+            if len(lines) > 1:
+                return [line.split()[0] for line in lines[1:] if line.strip()]
+    except Exception:
+        pass
+
+    return []
+
+
+def get_cross_referenced_models() -> List[str]:
+    """
+    Returns available models cross-referenced between config.yaml and local Ollama (`ollama list`).
+    Only models configured in config.yaml that are confirmed to be installed in Ollama are returned.
+    If Ollama is unreachable or has no matching models, falls back to config.yaml models.
+    """
+    config_models = get_available_models()
+    installed = get_ollama_list_models()
+    if not installed:
+        return config_models
+
+    matched = []
+    for cm in config_models:
+        cm_base = cm.split(":")[0]
+        if cm in installed or f"{cm}:latest" in installed:
+            matched.append(cm)
+        elif any(im.split(":")[0] == cm_base for im in installed):
+            matched.append(cm)
+
+    return matched if matched else config_models
+
+
 def get_gpu_loaded_models() -> Dict[str, Dict[str, Any]]:
     """Returns mapping of models currently resident in GPU memory."""
     loaded = {}
