@@ -32,102 +32,171 @@ def render_empty_decisions():
     )
 
 
+def check_is_match(ev: QuestionEvaluation, ground_truth: Optional[Any]) -> Optional[bool]:
+    """Determines whether the model prediction matches the ground truth."""
+    if ground_truth is None:
+        return None
+    q_type = str(getattr(ev, "question_type", "noul")).lower()
+    if q_type in ("score", "ordinal"):
+        try:
+            gt_num = float(ground_truth)
+            pred_score = float(ev.score if ev.score is not None else ev.p_true)
+            return abs(pred_score - gt_num) < 0.6
+        except (ValueError, TypeError):
+            return False
+    elif q_type in ("choice", "categorical"):
+        gt_str = str(ground_truth).strip().lower()
+        pred_choice = str(ev.selected_choice or "").strip().lower()
+        return pred_choice == gt_str
+    else:  # noul / bool
+        if isinstance(ground_truth, str):
+            gt_bool = ground_truth.strip().lower() in ("true", "1", "yes")
+        else:
+            gt_bool = bool(ground_truth)
+        pred_bool = (float(ev.p_true) >= 0.5)
+        return pred_bool == gt_bool
+
+
 def render_evaluation_bar(
     ev: QuestionEvaluation,
     threshold_percent: float,
     model_color: str,
     ground_truth: Optional[Any] = None,
 ):
-    """Renders a single question probability meter with vertical threshold indicator and ground truth badge."""
+    """Renders a single question evaluation row comparing prediction directly against truth without PASS/FAIL status badges."""
     q_type = str(getattr(ev, "question_type", "noul")).lower()
     is_score = (q_type in ("score", "ordinal"))
     is_choice = (q_type in ("choice", "categorical"))
 
+    is_match = check_is_match(ev, ground_truth)
+
     if is_score:
-        score_val = ev.score if ev.score is not None else ev.p_true
+        score_val = float(ev.score if ev.score is not None else ev.p_true)
         p_pct = min(100.0, max(0.0, (score_val / 3.0) * 100.0))
-        metric_str = f"Score = {score_val:.1f}"
+        pred_label = f"Level {int(round(score_val))}"
+        pred_detail = f"Score {score_val:.1f}"
+        truth_label = f"Level {int(float(ground_truth))}" if ground_truth is not None else None
+        metric_str = f"Rubric 0-3"
     elif is_choice:
-        p_pct = ev.confidence * 100.0
-        metric_str = f"P = {p_pct:.1f}%"
+        p_pct = float(ev.confidence) * 100.0
+        choice_text = ev.selected_choice or "-"
+        pred_label = choice_text
+        pred_detail = f"{p_pct:.1f}%"
+        truth_label = str(ground_truth) if ground_truth is not None else None
+        metric_str = f"Choice: {choice_text}"
+    else:  # noul / bool
+        p_val = float(ev.p_true)
+        pred_bool = (p_val >= 0.5)
+        conf_pct = (p_val if pred_bool else (1.0 - p_val)) * 100.0
+        pred_label = "True" if pred_bool else "False"
+        pred_detail = f"{conf_pct:.1f}%"
+        truth_label = str(bool(ground_truth)) if ground_truth is not None else None
+        p_pct = p_val * 100.0
+        metric_str = f"P(true) = {p_val * 100:.1f}%"
+
+    # Color progress bar: teal if match, orange if diff, cyan if no truth
+    if is_match is True:
+        bar_color = "teal"
+    elif is_match is False:
+        bar_color = "orange"
     else:
-        p_pct = ev.p_true * 100.0
-        metric_str = f"P(true) = {p_pct:.1f}%"
+        bar_color = "cyan"
 
-    bar_color = "teal" if ev.passed else ("red" if ev.required else "orange")
-    status_badge_color = "green" if ev.passed else ("red" if ev.required else "orange")
-    status_text = "PASS" if ev.passed else ("FAIL (REQ)" if ev.required else "FLAGGED")
+    # Match badge
+    match_badge = None
+    if is_match is not None:
+        if is_match:
+            match_badge = dmc.Badge(
+                "✓ Match",
+                color="teal",
+                variant="light",
+                size="xs",
+                style={"fontFamily": "'JetBrains Mono', monospace", "fontWeight": 700},
+            )
+        else:
+            match_badge = dmc.Badge(
+                "✗ Diff",
+                color="orange",
+                variant="light",
+                size="xs",
+                style={"fontFamily": "'JetBrains Mono', monospace", "fontWeight": 700},
+            )
 
-    # Render Ground Truth Badge if template is active and has ground truth
-    gt_badge = None
-    if ground_truth is not None:
-        if is_score:
-            gt_num = float(ground_truth)
-            is_match = abs((ev.score if ev.score is not None else ev.p_true) - gt_num) < 0.6
-            gt_badge = dmc.Badge(
-                f"Truth: Level {int(gt_num)}",
-                color="teal" if is_match else "blue",
-                variant="light",
-                size="xs",
-                style={"fontFamily": "'JetBrains Mono', monospace"},
-            )
-        elif is_choice:
-            gt_str = str(ground_truth)
-            is_match = (ev.selected_choice == gt_str)
-            gt_badge = dmc.Badge(
-                f"Truth: {gt_str}",
-                color="teal" if is_match else "orange",
-                variant="light",
-                size="xs",
-                style={"fontFamily": "'JetBrains Mono', monospace", "textTransform": "none"},
-            )
-        else:  # noul / boolean
-            gt_bool = bool(ground_truth)
-            model_pred_bool = (ev.p_true >= 0.5)
-            is_match = (model_pred_bool == gt_bool)
-            gt_badge = dmc.Badge(
-                f"Truth: {gt_bool}",
-                color="teal" if is_match else "orange",
-                variant="light",
-                size="xs",
-                style={"fontFamily": "'JetBrains Mono', monospace"},
-            )
+    # Prediction tag & Truth tag
+    pred_tag = html.Span([
+        html.Span("Pred: ", style={"color": "#94a3b8", "fontSize": "11px", "fontWeight": 500}),
+        html.Span(
+            pred_label,
+            style={
+                "color": "#34d399" if is_match is True else ("#fb923c" if is_match is False else "#38bdf8"),
+                "fontWeight": 700,
+                "fontSize": "11.5px",
+                "fontFamily": "'JetBrains Mono', monospace",
+            },
+        ),
+        html.Span(
+            f" ({pred_detail})" if pred_detail else "",
+            style={"color": "#64748b", "fontSize": "10.5px", "marginLeft": "3px", "fontFamily": "'JetBrains Mono', monospace"},
+        ),
+    ])
+
+    truth_tag = None
+    if truth_label is not None:
+        truth_tag = html.Span([
+            html.Span("Truth: ", style={"color": "#64748b", "fontSize": "11px", "fontWeight": 500}),
+            html.Span(
+                truth_label,
+                style={
+                    "color": "#e2e8f0",
+                    "fontWeight": 600,
+                    "fontSize": "11.5px",
+                    "fontFamily": "'JetBrains Mono', monospace",
+                    "backgroundColor": "rgba(255,255,255,0.06)",
+                    "padding": "1px 6px",
+                    "borderRadius": "3px",
+                    "border": "1px solid rgba(255,255,255,0.1)",
+                },
+            ),
+        ])
 
     return html.Div(
-        style={"marginBottom": "10px", "padding": "7px 10px", "background": "rgba(255,255,255,0.015)", "borderRadius": "4px", "border": "1px solid rgba(255,255,255,0.03)"},
+        style={
+            "marginBottom": "10px",
+            "padding": "8px 10px",
+            "background": "rgba(255,255,255,0.015)",
+            "borderRadius": "4px",
+            "border": "1px solid rgba(255,255,255,0.03)",
+        },
         children=[
+            # Top row: Question Name + Match Badge (left), Pred + Truth (right)
             dmc.Group(
                 justify="space-between",
                 children=[
                     dmc.Group([
-                        dmc.Text(ev.question_name, fw=600, size="xs", style={"fontFamily": "'JetBrains Mono', monospace", "color": "#f8fafc"}),
-                        dmc.Badge(status_text, color=status_badge_color, size="xs", variant="light"),
+                        dmc.Text(
+                            ev.question_name,
+                            fw=600,
+                            size="xs",
+                            style={"fontFamily": "'JetBrains Mono', monospace", "color": "#f8fafc"},
+                        ),
+                        match_badge if match_badge else html.Span(),
                     ], gap=8),
                     dmc.Group([
-                        dmc.Text(
-                            metric_str,
-                            size="xs",
-                            fw=600,
-                            c="#e2e8f0" if ev.passed else "#f87171",
-                            style={"fontFamily": "'JetBrains Mono', monospace"},
-                        ),
-                        gt_badge if gt_badge else html.Span(),
-                    ], gap=6),
-                ]
+                        pred_tag,
+                        html.Span("•", style={"color": "#334155", "fontSize": "10px"}) if truth_tag else html.Span(),
+                        truth_tag if truth_tag else html.Span(),
+                    ], gap=8),
+                ],
             ),
-            # Probability bar with threshold line
+            # Probability / Confidence meter
             html.Div(
                 className="prob-meter-container",
+                style={"marginTop": "5px", "marginBottom": "4px"},
                 children=[
                     dmc.Progress(value=p_pct, color=bar_color, size="sm", radius="xs"),
-                    # Threshold vertical line marker
-                    html.Div(
-                        className="threshold-marker",
-                        style={"left": f"{threshold_percent}%"},
-                    ),
-                ]
+                ],
             ),
-            # Evidence snippet
+            # Bottom row: Evidence snippet & raw metric
             dmc.Group(
                 justify="space-between",
                 children=[
@@ -135,12 +204,24 @@ def render_evaluation_bar(
                         f"Evidence: \"{ev.evidence}\"" if ev.evidence else ev.rationale,
                         size="xs",
                         c="#94a3b8",
-                        style={"fontStyle": "italic", "maxWidth": "85%", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"},
+                        style={
+                            "fontStyle": "italic",
+                            "maxWidth": "80%",
+                            "overflow": "hidden",
+                            "textOverflow": "ellipsis",
+                            "whiteSpace": "nowrap",
+                        },
                     ),
-                    dmc.Text(ev.selected_choice if ev.selected_choice else "", size="xs", c="cyan", fw=500),
-                ]
+                    dmc.Text(
+                        metric_str,
+                        size="xs",
+                        c="#64748b",
+                        fw=500,
+                        style={"fontFamily": "'JetBrains Mono', monospace", "fontSize": "10.5px"},
+                    ),
+                ],
             ),
-        ]
+        ],
     )
 
 
@@ -149,8 +230,7 @@ def render_model_decision_card(
     threshold_percent: float,
     ground_truth_map: Optional[Dict[str, Any]] = None,
 ):
-    """Renders a decisions card for a single model with its distinct color identity and GT comparisons."""
-    passed_count = sum(1 for e in model_result.evaluations if e.passed)
+    """Renders a decisions card for a single model with prediction vs truth comparison."""
     total_count = len(model_result.evaluations)
     m_color = model_result.model_color
 
@@ -163,6 +243,23 @@ def render_model_decision_card(
         )
         for e in model_result.evaluations
     ]
+
+    # Header metric: Accuracy against ground truth if present, otherwise gate count
+    if ground_truth_map:
+        matches_count = sum(
+            1 for e in model_result.evaluations
+            if check_is_match(e, ground_truth_map.get(e.question_name))
+        )
+        acc_pct = (matches_count / total_count * 100) if total_count else 0
+        header_metric = dmc.Badge(
+            f"{matches_count}/{total_count} Matches ({acc_pct:.0f}%)",
+            color="teal" if matches_count == total_count else ("green" if acc_pct >= 60 else "orange"),
+            variant="light",
+            size="xs",
+            style={"fontFamily": "'JetBrains Mono', monospace", "fontWeight": 700},
+        )
+    else:
+        header_metric = dmc.Text(f"{total_count} Gates Evaluated", size="xs", c="dimmed")
 
     return html.Div(
         className="decisions-card",
@@ -185,7 +282,7 @@ def render_model_decision_card(
                             size="xs",
                         ),
                     ], gap=8),
-                    dmc.Text(f"{passed_count}/{total_count} Passed", size="xs", c="dimmed"),
+                    header_metric,
                 ],
                 style={"marginBottom": "10px", "paddingBottom": "6px", "borderBottom": "1px solid rgba(255,255,255,0.06)"},
             ),

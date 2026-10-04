@@ -783,12 +783,12 @@ def run_inspection(
     results = [run_model_inference(m_name, text, q_objs, float(threshold), model_index=slot_idx) for slot_idx, m_name in active_pairs]
     active_models = [m_name for _, m_name in active_pairs]
 
-    # Ground truth mapping: only show when user selected a given template example
+    # Ground truth mapping: loaded from selected preset
     ground_truth_map = None
     if preset_id:
         doc = get_preset_by_id(preset_id)
-        if doc and text and doc.content.strip() == text.strip():
-            ground_truth_map = doc.states or None
+        if doc and doc.states:
+            ground_truth_map = doc.states
 
     is_max = bool(panels_state and (panels_state.get("maximized") == "decisions" or (panels_state.get("state_collapsed") and panels_state.get("questions_collapsed"))))
     rendered_decisions = render_decisions_content(
