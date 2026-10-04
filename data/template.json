@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0",
+  "name": "Decision Playground Dataset Template",
+  "description": "Template format for Decision Playground. Reference this file to define custom questions (Noul, Choice, Score) and process text records.",
+  "questions": [
+    {
+      "name": "target_spec_met",
+      "type": "noul",
+      "instructions": "Does the process log indicate that the production lot yield and operational metrics strictly meet or exceed nominal target specs?",
+      "criteria": {
+        "true": "Process specifications, yield targets, and telemetry remain strictly nominal with zero lot rejection.",
+        "false": "Process specifications failed, yield fell below target threshold, or lot was flagged for containment."
+      },
+      "pass_condition": true,
+      "required": true
+    },
+    {
+      "name": "excursion_anomaly_detected",
+      "type": "noul",
+      "instructions": "Did the machine or process line experience any unscheduled stoppage, thermal runaway, or pressure spike exceeding control limits?",
+      "criteria": {
+        "true": "An unscheduled line stoppage, machine breakdown, or out-of-control parameter spike occurred.",
+        "false": "Continuous nominal flow with zero unscheduled downtime or parameter excursions."
+      },
+      "pass_condition": false,
+      "required": true
+    },
+    {
+      "name": "primary_issue_type",
+      "type": "choice",
+      "instructions": "Which defect category or operational disturbance is primarily identified in this log?",
+      "criteria": {
+        "mechanical_jam": "Feeder mispick, nozzle obstruction, robot gripper jam, or part misfeed.",
+        "thermal_drift": "Chamber overheating, heater element degradation, or cooling loop failure.",
+        "pressure_excursion": "Vacuum chamber hunting, pump foreline spike, or fluid pressure drop.",
+        "none": "Nominal execution. No process non-conformance or defect mode detected."
+      },
+      "pass_choice": "none",
+      "required": true
+    },
+    {
+      "name": "severity_rating",
+      "type": "score",
+      "instructions": "Rate the overall impact of any observed disturbance on a 0 to 3 ordinal scale.",
+      "criteria": [
+        "Level 0: Nominal run. Full continuous flow, zero downtime, telemetry within 3-sigma limits.",
+        "Level 1: Minor nuisance alert or transient pause cleared rapidly with zero scrap impact.",
+        "Level 2: Moderate excursion with line pause or partial lot hold requiring 100% sorting or rework.",
+        "Level 3: Critical equipment fault, severe thermal/pressure hazard, or complete lot scrap event."
+      ],
+      "pass_condition": 1.0,
+      "required": false
+    }
+  ],
+  "records": [
+    {
+      "id": "REC_001",
+      "title": "Nominal Production Run #101",
+      "category": "Standard Run",
+      "text": "OPERATIONAL RUN LOG: ASSEMBLY CELL 1\nShift: Morning (07:00 - 15:30) | Supervisor: M. Vance\nPart: High-Voltage Inverter Module Rev 3.1\nBatch Size: 2,500 units | Placed: 2,510 units\n\nMETROLOGY & YIELD:\n- Automated Optical Inspection (AOI): 99.82%\n- Final Electrical Functional Test Yield: 99.40% (Target: >= 98.50%)\n- Scrap: 6 units (3 minor lead bends, 3 misaligned passives)\n\nTELEMETRY & OPERATION:\n- Unscheduled Stoppage: 0 minutes\n- Chamber Temperature: 185.2C steady (Control envelope: 180C - 190C)\n- Inert Gas Pressure: 4.2 bar (Spec: 4.0 - 4.5 bar)\n\nDISPOSITION:\nLot certified conforming to QA standard. Batch released for final encapsulation.",
+      "states": {
+        "target_spec_met": true,
+        "excursion_anomaly_detected": false,
+        "primary_issue_type": "none",
+        "severity_rating": 0
+      }
+    },
+    {
+      "id": "REC_002",
+      "title": "Excursion Event Run #102",
+      "category": "Anomaly Incident",
+      "text": "OPERATIONAL RUN LOG: ASSEMBLY CELL 1\nShift: Evening (15:30 - 23:00) | Supervisor: D. Chen\nPart: High-Voltage Inverter Module Rev 3.1\nBatch Size: 2,500 units | Completed: 2,120 units\n\nMETROLOGY & YIELD:\n- Final Yield: 84.8% (Target: >= 98.50% - FAILED)\n- Scrap: 380 units flagged with substrate thermal discoloration\n\nTELEMETRY & OPERATION:\n- Incident: Zone 3 heater thermocouple failed open-loop at 18:22 UTC. Zone temperature surged to 238C within 90 seconds before emergency thermal interlock halted the conveyor.\n- Unscheduled Downtime: 64 minutes tool stoppage for cooldown and sensor replacement.\n- Root Cause: Defective PID relay contact fused in closed position.\n\nDISPOSITION:\nLot quarantined in Hold Bay C pending engineering destructive testing.",
+      "states": {
+        "target_spec_met": false,
+        "excursion_anomaly_detected": true,
+        "primary_issue_type": "thermal_drift",
+        "severity_rating": 3
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+# Decision Playground Central Configuration
+
+# Dataset File Paths
+datasets:
+  example_path: "data/example.json"
+  template_path: "data/template.json"
+
+# Ollama Inference & Model Settings
+ollama:
+  base_url: "http://127.0.0.1:11434"
+  api_key: "ollama"
+  threshold: 90.0
+  default_model: "tev1:0.8b"
+  # List of models maintained for evaluation & benchmarks
+  models:
+    - "nimble:9b"
+    - "tev1:0.8b"
+    - "tev1:4b"
+    - "clef-flash:9b"
+
+# Logging Settings
+logging:
+  log_folder: "./logs"
+  timezone_offset_hours: 8  # UTC+8 timezone for filenames and timestamps
